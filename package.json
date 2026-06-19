@@ -1,0 +1,41 @@
+{
+  "name": "raya-agent",
+  "version": "0.1.0",
+  "description": "Raya, a minimal terminal chat agent powered by OpenRouter.",
+  "type": "module",
+  "bin": {
+    "raya": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "raya",
+    "agent",
+    "cli",
+    "openrouter",
+    "chatbot"
+  ],
+  "author": "Haos",
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "openai": "^4.77.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
