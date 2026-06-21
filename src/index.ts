@@ -2,12 +2,15 @@
 
 import dotenv from "dotenv";
 import OpenAI from "openai";
+import { execFile } from "node:child_process";
 import { clearLine, cursorTo, emitKeypressEvents } from "node:readline";
 import readline from "node:readline/promises";
-import { existsSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { stdin as input, stdout as output } from "node:process";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
 type ChatMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
@@ -31,8 +34,81 @@ type RayaResponse = {
   seconds: number;
 };
 
+type ImageAttachment = {
+  id: number;
+  placeholder: string;
+  dataUrl: string;
+};
+
+type TurnInput = {
+  text: string;
+  attachments: ImageAttachment[];
+};
+
+type RayaConfig = {
+  model: string;
+  models: string[];
+  mode: "Chat" | "Agent";
+  contextTokens: number;
+  search: {
+    maxResults: number;
+    pageChars: number;
+    fetchTimeoutMs: number;
+  };
+  images: {
+    maxDimension: number;
+    jpegQuality: number;
+  };
+  retries: {
+    maxAttempts: number;
+    initialDelayMs: number;
+  };
+  openrouter: {
+    apiKey?: string;
+    baseURL: string;
+    referer: string;
+    title: string;
+  };
+};
+
+type LoadedConfig = {
+  config: RayaConfig;
+  paths: string[];
+};
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const packageRoot = join(__dirname, "..");
+const execFileAsync = promisify(execFile);
+
+const defaultConfig: RayaConfig = {
+  model: "google/gemma-4-31b-it:free",
+  models: [
+    "google/gemma-4-31b-it:free",
+    "openai/gpt-4o-mini",
+    "anthropic/claude-3.5-sonnet",
+    "google/gemini-2.0-flash-001"
+  ],
+  mode: "Chat",
+  contextTokens: 128000,
+  search: {
+    maxResults: 5,
+    pageChars: 6000,
+    fetchTimeoutMs: 8000
+  },
+  images: {
+    maxDimension: 1280,
+    jpegQuality: 80
+  },
+  retries: {
+    maxAttempts: 3,
+    initialDelayMs: 1200
+  },
+  openrouter: {
+    baseURL: "https://openrouter.ai/api/v1",
+    referer: "https://github.com/haos/raya-agent",
+    title: "Raya"
+  }
+};
 
 const theme = {
   reset: "\x1b[0m",
@@ -82,19 +158,130 @@ function loadEnv(): string | undefined {
   return undefined;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function optionalNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function optionalStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const strings = value.filter((item): item is string => typeof item === "string" && item.length > 0);
+  return strings.length > 0 ? strings : undefined;
+}
+
+function mergeConfig(base: RayaConfig, raw: unknown): RayaConfig {
+  if (!isRecord(raw)) {
+    return base;
+  }
+
+  const search = isRecord(raw.search) ? raw.search : undefined;
+  const images = isRecord(raw.images) ? raw.images : undefined;
+  const retries = isRecord(raw.retries) ? raw.retries : undefined;
+  const openrouter = isRecord(raw.openrouter) ? raw.openrouter : undefined;
+  const mode = raw.mode === "Agent" || raw.mode === "Chat" ? raw.mode : base.mode;
+  const apiKey = optionalString(openrouter?.apiKey) ?? base.openrouter.apiKey;
+
+  return {
+    ...base,
+    model: optionalString(raw.model) ?? base.model,
+    models: optionalStringArray(raw.models) ?? base.models,
+    mode,
+    contextTokens: optionalNumber(raw.contextTokens) ?? base.contextTokens,
+    search: {
+      ...base.search,
+      maxResults: optionalNumber(search?.maxResults) ?? base.search.maxResults,
+      pageChars: optionalNumber(search?.pageChars) ?? base.search.pageChars,
+      fetchTimeoutMs: optionalNumber(search?.fetchTimeoutMs) ?? base.search.fetchTimeoutMs
+    },
+    images: {
+      ...base.images,
+      maxDimension: optionalNumber(images?.maxDimension) ?? base.images.maxDimension,
+      jpegQuality: optionalNumber(images?.jpegQuality) ?? base.images.jpegQuality
+    },
+    retries: {
+      ...base.retries,
+      maxAttempts: optionalNumber(retries?.maxAttempts) ?? base.retries.maxAttempts,
+      initialDelayMs: optionalNumber(retries?.initialDelayMs) ?? base.retries.initialDelayMs
+    },
+    openrouter: {
+      ...base.openrouter,
+      ...(apiKey ? { apiKey } : {}),
+      baseURL: optionalString(openrouter?.baseURL) ?? base.openrouter.baseURL,
+      referer: optionalString(openrouter?.referer) ?? base.openrouter.referer,
+      title: optionalString(openrouter?.title) ?? base.openrouter.title
+    }
+  };
+}
+
+function readConfigFile(path: string): unknown {
+  return JSON.parse(readFileSync(path, "utf8")) as unknown;
+}
+
+function ensureGlobalConfig(path: string): void {
+  if (existsSync(path)) {
+    return;
+  }
+
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(defaultConfig, null, 2)}\n`, { mode: 0o600 });
+}
+
+function loadConfig(): LoadedConfig {
+  const globalConfigPath = join(homedir(), ".raya", "config.json");
+  const configPaths = [globalConfigPath, join(process.cwd(), ".raya", "config.json"), join(process.cwd(), "raya.config.json")];
+  let config = defaultConfig;
+  const loadedPaths: string[] = [];
+
+  ensureGlobalConfig(globalConfigPath);
+
+  for (const configPath of configPaths) {
+    if (!existsSync(configPath)) {
+      continue;
+    }
+
+    try {
+      config = mergeConfig(config, readConfigFile(configPath));
+      loadedPaths.push(configPath);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(color(`Invalid config file: ${configPath}`, theme.red));
+      console.error(message);
+      process.exit(1);
+    }
+  }
+
+  return { config, paths: loadedPaths };
+}
+
 const envPath = loadEnv();
-const apiKey = process.env.OPENROUTER_API_KEY;
-const model = process.env.OPENROUTER_MODEL ?? "openai/gpt-4o-mini";
-const contextWindowTokens = Number(process.env.OPENROUTER_CONTEXT_TOKENS ?? "128000");
-const mode = "Chat";
+const { config, paths: configPaths } = loadConfig();
+const apiKey = process.env.OPENROUTER_API_KEY ?? config.openrouter.apiKey;
+let currentModel = process.env.OPENROUTER_MODEL ?? config.model;
+const contextWindowTokens = Number(process.env.OPENROUTER_CONTEXT_TOKENS ?? config.contextTokens);
+const mode = config.mode;
 const memoryStatus = "Disabled";
 const mcpStatus = "Disconnected";
-const pageContentLimit = Number(process.env.RAYA_SEARCH_PAGE_CHARS ?? "6000");
+const searchMaxResults = Number(process.env.RAYA_SEARCH_MAX_RESULTS ?? config.search.maxResults);
+const pageContentLimit = Number(process.env.RAYA_SEARCH_PAGE_CHARS ?? config.search.pageChars);
+const searchFetchTimeoutMs = Number(process.env.RAYA_SEARCH_FETCH_TIMEOUT_MS ?? config.search.fetchTimeoutMs);
+const imageMaxDimension = Number(process.env.RAYA_IMAGE_MAX_DIMENSION ?? config.images.maxDimension);
+const imageJpegQuality = Number(process.env.RAYA_IMAGE_JPEG_QUALITY ?? config.images.jpegQuality);
+const maxRetryAttempts = Number(process.env.RAYA_RETRY_ATTEMPTS ?? config.retries.maxAttempts);
+const initialRetryDelayMs = Number(process.env.RAYA_RETRY_INITIAL_DELAY_MS ?? config.retries.initialDelayMs);
 const commandSuggestions = [
   { name: "/search <query>", description: "Search web, read pages, answer with sources" },
-  { name: "/web <query>", description: "Alias for /search" },
-  { name: "/exit", description: "Quit Raya" },
-  { name: "/quit", description: "Quit Raya" }
+  { name: "/model", description: "Switch OpenRouter model" },
+  { name: "/exit", description: "Quit Raya" }
 ];
 
 if (!apiKey) {
@@ -107,10 +294,10 @@ if (!apiKey) {
 
 const client = new OpenAI({
   apiKey,
-  baseURL: "https://openrouter.ai/api/v1",
+  baseURL: config.openrouter.baseURL,
   defaultHeaders: {
-    "HTTP-Referer": "https://github.com/haos/raya-agent",
-    "X-Title": "Raya"
+    "HTTP-Referer": config.openrouter.referer,
+    "X-Title": config.openrouter.title
   }
 });
 
@@ -123,6 +310,7 @@ const messages: ChatMessage[] = [
 ];
 
 const rl = readline.createInterface({ input, output });
+const nonInteractiveLines = !input.isTTY ? rl[Symbol.asyncIterator]() : undefined;
 
 function printHeader(): void {
   console.clear();
@@ -131,14 +319,13 @@ function printHeader(): void {
   console.log(color("│", theme.blue) + color("  Personal AI Operating System               ", theme.muted) + color("│", theme.blue));
   console.log(color("╰─────────────────────────────────────────────╯", theme.blue));
   console.log();
-  console.log(`${color("Model", theme.muted)}     : ${color(model, theme.white)}`);
+  console.log(`${color("Model", theme.muted)}     : ${color(currentModel, theme.white)}`);
   console.log(`${color("Mode", theme.muted)}      : ${color(mode, theme.white)}`);
   console.log(`${color("Workspace", theme.muted)} : ${color(formatPath(process.cwd()), theme.white)}`);
   console.log(`${color("Memory", theme.muted)}    : ${color(memoryStatus, theme.white)}`);
   console.log(`${color("MCP", theme.muted)}       : ${color(mcpStatus, theme.white)}`);
-  console.log(`${color("Web", theme.muted)}       : ${color("/search fetches pages", theme.white)}`);
-  console.log();
-  console.log(`${color("Config", theme.muted)}    : ${color(envPath ? formatPath(envPath) : "No .env loaded", theme.white)}`);
+  console.log(`${color("Config", theme.muted)}    : ${color(configPaths.map(formatPath).join(", ") || "No config loaded", theme.white)}`);
+  console.log(`${color("Env", theme.muted)}       : ${color(envPath ? formatPath(envPath) : "No .env loaded", theme.white)}`);
   console.log();
   console.log(color("Ready.", theme.cyan));
 }
@@ -146,6 +333,49 @@ function printHeader(): void {
 function printError(message: string): void {
   console.error(`${color("error", theme.red)} ${color("›", theme.muted)} ${message}`);
   console.error();
+}
+
+function errorStatus(error: unknown): number | undefined {
+  if (!isRecord(error)) {
+    return undefined;
+  }
+
+  const status = error.status ?? error.statusCode;
+  return typeof status === "number" ? status : undefined;
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return String(error);
+}
+
+function formatModelError(error: unknown): string {
+  const status = errorStatus(error);
+  const message = errorMessage(error);
+
+  if (status === 429 || message.includes("429")) {
+    return "OpenRouter/provider rate limit or overload (429). Raya compressed the image and retried, but the free provider still refused it. Try again in a minute or switch model/provider.";
+  }
+
+  if (message.toLowerCase().includes("image")) {
+    return `${message}. Check that the selected OpenRouter model supports image input.`;
+  }
+
+  return message;
+}
+
+function isRetryableError(error: unknown): boolean {
+  const status = errorStatus(error);
+  const message = errorMessage(error).toLowerCase();
+
+  return status === 429 || status === 500 || status === 502 || status === 503 || status === 504 || message.includes("provider returned error");
+}
+
+async function delay(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function decodeHtml(value: string): string {
@@ -181,6 +411,23 @@ function contentToText(content: ChatMessage["content"]): string {
 
   if (!content) {
     return "";
+  }
+
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (isRecord(part) && part.type === "text" && typeof part.text === "string") {
+          return part.text;
+        }
+
+        if (isRecord(part) && part.type === "image_url") {
+          return "[Image]";
+        }
+
+        return "";
+      })
+      .filter(Boolean)
+      .join(" ");
   }
 
   return JSON.stringify(content);
@@ -251,7 +498,7 @@ async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Respons
 
 async function fetchPage(result: SearchResult): Promise<WebPage> {
   try {
-    const response = await fetchWithTimeout(result.url, 8000);
+    const response = await fetchWithTimeout(result.url, searchFetchTimeoutMs);
 
     if (!response.ok) {
       return { ...result, text: "", fetched: false, error: `${response.status} ${response.statusText}` };
@@ -311,7 +558,76 @@ async function searchWeb(query: string): Promise<SearchResult[]> {
       };
     })
     .filter((result): result is SearchResult => Boolean(result?.title && result.url))
-    .slice(0, 5);
+    .slice(0, searchMaxResults);
+}
+
+async function clipboardImageToDataUrl(): Promise<string> {
+  const directory = await mkdtemp(join(tmpdir(), "raya-clipboard-"));
+  const pngPath = join(directory, "clipboard.png");
+  const jpegPath = join(directory, "clipboard.jpg");
+  const script = `
+ObjC.import('AppKit');
+const imagePath = ${JSON.stringify(pngPath)};
+const pasteboard = $.NSPasteboard.generalPasteboard;
+const image = $.NSImage.alloc.initWithPasteboard(pasteboard);
+if (!image) {
+  throw new Error('Clipboard does not contain an image.');
+}
+const tiffData = image.TIFFRepresentation;
+if (!tiffData) {
+  throw new Error('Could not read clipboard image data.');
+}
+const bitmap = $.NSBitmapImageRep.imageRepWithData(tiffData);
+if (!bitmap) {
+  throw new Error('Could not convert clipboard image data.');
+}
+const pngData = bitmap.representationUsingTypeProperties(4, $());
+if (!pngData || !pngData.writeToFileAtomically(imagePath, true)) {
+  throw new Error('Could not save clipboard image as PNG.');
+}
+`;
+
+  try {
+    await execFileAsync("osascript", ["-l", "JavaScript", "-e", script], { timeout: 10000 });
+    await execFileAsync(
+      "sips",
+      ["-Z", String(imageMaxDimension), "-s", "format", "jpeg", "-s", "formatOptions", String(imageJpegQuality), pngPath, "--out", jpegPath],
+      { timeout: 10000 }
+    );
+    const image = await readFile(jpegPath);
+    return `data:image/jpeg;base64,${image.toString("base64")}`;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Clipboard image failed: ${message}`);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+async function clipboardText(): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync("pbpaste", [], { timeout: 3000 });
+    return stdout;
+  } catch {
+    return "";
+  }
+}
+
+function createUserMessage(inputValue: TurnInput): ChatMessage {
+  if (inputValue.attachments.length === 0) {
+    return { role: "user", content: inputValue.text };
+  }
+
+  return {
+    role: "user",
+    content: [
+      { type: "text", text: inputValue.text || "Analyze the attached image." },
+      ...inputValue.attachments.map((attachment) => ({
+        type: "image_url" as const,
+        image_url: { url: attachment.dataUrl }
+      }))
+    ]
+  };
 }
 
 function formatSearchContext(query: string, pages: WebPage[]): string {
@@ -342,6 +658,92 @@ function printSearchResults(pages: WebPage[]): void {
   console.log();
 }
 
+function shouldAutoSearch(text: string): boolean {
+  const normalized = text.toLowerCase();
+
+  if (normalized.startsWith("/")) {
+    return false;
+  }
+
+  const patterns = [
+    /\b(latest|current|today|recent|news|price|weather|release date|version|changelog)\b/i,
+    /\b(search|find|look up|google|web|internet)\b/i,
+    /\b202[5-9]\b/,
+    /(актуальн|сейчас|сегодня|новост|последн|свеж|курс|цена|погода|релиз|верси|обновл)/i,
+    /(найди|поищи|загугли|посмотри в интернете|в сети|вебе|интернет)/i,
+    /(что известно|дай информацию|проверь|сравни цены|какая сейчас|какой сейчас)/i
+  ];
+
+  return patterns.some((pattern) => pattern.test(normalized));
+}
+
+async function addWebContext(query: string, automatic: boolean): Promise<boolean> {
+  console.log();
+  console.log(`${color("web", theme.orange)} ${color("›", theme.muted)} ${automatic ? "auto-search" : "searching"} ${color(query, theme.white)}`);
+  const results = await searchWeb(query);
+
+  if (results.length === 0) {
+    printError("No search results found.");
+    return false;
+  }
+
+  console.log(`${color("web", theme.orange)} ${color("›", theme.muted)} loading pages into context`);
+  const pages = await fetchPages(results);
+  printSearchResults(pages);
+  messages.push({ role: "system", content: formatSearchContext(query, pages) });
+
+  return true;
+}
+
+async function selectModel(argument?: string): Promise<void> {
+  const directModel = argument?.trim();
+
+  if (directModel) {
+    currentModel = directModel;
+    console.log(`${color("model", theme.orange)} ${color("›", theme.muted)} ${color(currentModel, theme.white)}`);
+    console.log();
+    return;
+  }
+
+  const models = Array.from(new Set([currentModel, ...config.models]));
+  console.log();
+  console.log(color("models", theme.orange));
+
+  for (const [index, candidate] of models.entries()) {
+    const marker = candidate === currentModel ? color("*", theme.cyan) : " ";
+    console.log(`  ${marker} ${color(String(index + 1).padStart(2), theme.muted)} ${color(candidate, theme.white)}`);
+  }
+
+  console.log(`  ${color("c", theme.muted)}  custom model id`);
+  const choice = (await readPlainLine("select model › "))?.trim() ?? "";
+
+  if (!choice) {
+    console.log();
+    return;
+  }
+
+  if (choice.toLowerCase() === "c") {
+    const customModel = (await readPlainLine("model id › "))?.trim() ?? "";
+
+    if (customModel) {
+      currentModel = customModel;
+    }
+  } else {
+    const selectedIndex = Number(choice) - 1;
+    const selectedModel = models[selectedIndex];
+
+    if (selectedModel) {
+      currentModel = selectedModel;
+    } else {
+      printError("Invalid model selection.");
+      return;
+    }
+  }
+
+  console.log(`${color("model", theme.orange)} ${color("›", theme.muted)} ${color(currentModel, theme.white)}`);
+  console.log();
+}
+
 function printCommandSuggestions(): void {
   console.log();
   console.log(color("commands", theme.orange));
@@ -356,30 +758,39 @@ function printCommandSuggestions(): void {
 function renderPrompt(buffer: string): void {
   cursorTo(output, 0);
   clearLine(output, 0);
-  output.write(color("> ", theme.white) + buffer);
+  const highlighted = buffer.replace(/\[Image \d+\]/g, (placeholder) => color(placeholder, theme.orange));
+  output.write(color("> ", theme.white) + highlighted);
 }
 
-async function readUserInput(): Promise<string | undefined> {
+async function readPlainLine(prompt: string): Promise<string | undefined> {
+  if (nonInteractiveLines) {
+    output.write(color(prompt, theme.white));
+    const next = await nonInteractiveLines.next();
+
+    if (next.done) {
+      return undefined;
+    }
+
+    output.write(`${next.value}\n`);
+    return next.value;
+  }
+
+  return rl.question(color(prompt, theme.white));
+}
+
+async function readUserInput(): Promise<TurnInput | undefined> {
   if (input.isTTY && output.isTTY) {
     return readInteractiveInput();
   }
 
-  try {
-    return await rl.question(color("> ", theme.white));
-  } catch (error) {
-    const code = typeof error === "object" && error && "code" in error ? error.code : undefined;
-
-    if (code === "ERR_USE_AFTER_CLOSE") {
-      return undefined;
-    }
-
-    throw error;
-  }
+  const text = await readPlainLine("> ");
+  return text === undefined ? undefined : { text, attachments: [] };
 }
 
-async function readInteractiveInput(): Promise<string | undefined> {
+async function readInteractiveInput(): Promise<TurnInput | undefined> {
   return new Promise((resolve) => {
     let buffer = "";
+    const attachments: ImageAttachment[] = [];
     let suggestionsVisible = false;
 
     const cleanup = (): void => {
@@ -389,6 +800,37 @@ async function readInteractiveInput(): Promise<string | undefined> {
 
     const redraw = (): void => {
       renderPrompt(buffer);
+    };
+
+    const appendText = (text: string): void => {
+      buffer += text;
+      redraw();
+    };
+
+    const appendImage = async (): Promise<boolean> => {
+      try {
+        const dataUrl = await clipboardImageToDataUrl();
+        const id = attachments.length + 1;
+        const placeholder = `[Image ${id}]`;
+        attachments.push({ id, placeholder, dataUrl });
+        buffer += buffer.length > 0 && !buffer.endsWith(" ") ? ` ${placeholder}` : placeholder;
+        redraw();
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    const pasteClipboard = async (): Promise<void> => {
+      if (await appendImage()) {
+        return;
+      }
+
+      const text = await clipboardText();
+
+      if (text.length > 0) {
+        appendText(text);
+      }
     };
 
     const showSuggestions = (): void => {
@@ -411,7 +853,7 @@ async function readInteractiveInput(): Promise<string | undefined> {
       if (key.name === "return") {
         cleanup();
         console.log();
-        resolve(buffer);
+        resolve({ text: buffer, attachments: attachments.filter((attachment) => buffer.includes(attachment.placeholder)) });
         return;
       }
 
@@ -423,19 +865,23 @@ async function readInteractiveInput(): Promise<string | undefined> {
 
       if (key.name === "escape") {
         buffer = "";
+        attachments.splice(0);
         redraw();
         return;
       }
 
+      if ((key.ctrl && key.name === "v") || key.sequence === "\u0016") {
+        void pasteClipboard();
+        return;
+      }
+
       if (character && character >= " " && !key.ctrl) {
-        buffer += character;
+        appendText(character);
 
         if (buffer === "/") {
           showSuggestions();
           return;
         }
-
-        redraw();
       }
     };
 
@@ -482,12 +928,29 @@ async function askRaya(): Promise<RayaResponse> {
   let answer = "";
 
   try {
-    const stream = await client.chat.completions.create({
-      model,
-      messages,
-      temperature: 0.7,
-      stream: true
-    });
+    let stream: AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk> | undefined;
+
+    for (let attempt = 1; attempt <= maxRetryAttempts; attempt += 1) {
+      try {
+        stream = (await client.chat.completions.create({
+          model: currentModel,
+          messages,
+          temperature: 0.7,
+          stream: true
+        })) as AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>;
+        break;
+      } catch (error) {
+        if (attempt >= maxRetryAttempts || !isRetryableError(error)) {
+          throw error;
+        }
+
+        await delay(initialRetryDelayMs * attempt);
+      }
+    }
+
+    if (!stream) {
+      throw new Error("Model stream was not created.");
+    }
 
     for await (const chunk of stream) {
       const content = chunk.choices[0]?.delta?.content ?? "";
@@ -542,21 +1005,27 @@ async function main(): Promise<void> {
       break;
     }
 
-    const userInput = rawUserInput.trim();
+    const userInput = rawUserInput.text.trim();
 
-    if (!userInput) {
+    if (!userInput && rawUserInput.attachments.length === 0) {
       continue;
     }
 
-    if (["/exit", "/quit"].includes(userInput.toLowerCase())) {
+    if (userInput.toLowerCase() === "/exit") {
       break;
     }
 
     const messagesBeforeTurn = messages.length;
-    const searchCommand = userInput.match(/^\/(search|web)\s+(.+)/i);
+    const searchCommand = userInput.match(/^\/search\s+(.+)/i);
+    const modelCommand = userInput.match(/^\/model(?:\s+(.+))?$/i);
+
+    if (modelCommand) {
+      await selectModel(modelCommand[1]);
+      continue;
+    }
 
     if (searchCommand) {
-      const query = searchCommand[2]?.trim() ?? "";
+      const query = searchCommand[1]?.trim() ?? "";
 
       if (!query) {
         printError("Usage: /search your query");
@@ -564,19 +1033,9 @@ async function main(): Promise<void> {
       }
 
       try {
-        console.log();
-        console.log(`${color("web", theme.orange)} ${color("›", theme.muted)} searching ${color(query, theme.white)}`);
-        const results = await searchWeb(query);
-
-        if (results.length === 0) {
-          printError("No search results found.");
+        if (!(await addWebContext(query, false))) {
           continue;
         }
-
-        console.log(`${color("web", theme.orange)} ${color("›", theme.muted)} loading pages into context`);
-        const pages = await fetchPages(results);
-        printSearchResults(pages);
-        messages.push({ role: "system", content: formatSearchContext(query, pages) });
         messages.push({ role: "user", content: `Using the fetched web page context above, answer this current question: ${query}` });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -584,7 +1043,16 @@ async function main(): Promise<void> {
         continue;
       }
     } else {
-      messages.push({ role: "user", content: userInput });
+      if (rawUserInput.attachments.length === 0 && shouldAutoSearch(userInput)) {
+        try {
+          await addWebContext(userInput, true);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          printError(`Auto-search failed: ${message}`);
+        }
+      }
+
+      messages.push(createUserMessage({ text: rawUserInput.text.trim(), attachments: rawUserInput.attachments }));
     }
 
     console.log();
@@ -596,8 +1064,7 @@ async function main(): Promise<void> {
     } catch (error) {
       messages.splice(messagesBeforeTurn);
 
-      const message = error instanceof Error ? error.message : String(error);
-      printError(message);
+      printError(formatModelError(error));
     }
   }
 
