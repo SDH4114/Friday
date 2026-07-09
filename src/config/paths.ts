@@ -1,0 +1,14 @@
+import { existsSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+export const RAYA_HOME = process.env.RAYA_HOME ?? join(homedir(), ".raya");
+export const RAYA_AUTH_PATH = join(RAYA_HOME, "auth.json");
+export const RAYA_CONFIG_PATH = join(RAYA_HOME, "config.json");
+export const RAYA_SESSIONS_PATH = join(RAYA_HOME, "sessions.json");
+
+export function ensureRayaHome(): void {
+  if (!existsSync(RAYA_HOME)) {
+    mkdirSync(RAYA_HOME, { recursive: true, mode: 0o700 });
+  }
+}

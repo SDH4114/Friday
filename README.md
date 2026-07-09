@@ -1,170 +1,147 @@
 # Raya
 
-Raya is a minimal terminal chat agent powered by OpenRouter.
+Raya is an open-source AI coding agent harness for the terminal. It is built as a TypeScript/Node.js npm CLI and uses the `earendil-works/pi` packages for model access, OpenAI Codex OAuth, and the base agent runtime.
 
-Codename: Friday.
+Raya defaults to OpenAI Codex through ChatGPT Plus/Pro/Codex OAuth, and can also connect to other `pi-ai` providers such as Anthropic API, OpenAI API, OpenCode Zen, and OpenRouter.
 
-## Quick Start
+## Install
+
+From the `prime` branch:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/SDH4114/Friday/prime/install.sh | bash
+```
+
+The installer supports macOS and Linux. It checks for Node.js 22+, installs Node 22 through `nvm` when needed, clones this repository, builds the CLI, and installs `raya` globally with npm.
+
+Manual development install:
 
 ```bash
 npm install
 npm run build
-cp .env.example .env
-```
-
-Add your OpenRouter API key to `.env`:
-
-```env
-OPENROUTER_API_KEY=your_openrouter_api_key_here
-OPENROUTER_MODEL=google/gemma-4-31b-it:free
-OPENROUTER_CONTEXT_TOKENS=128000
-RAYA_MODE=Chat
-RAYA_SEARCH_MAX_RESULTS=5
-RAYA_SEARCH_PAGE_CHARS=6000
-RAYA_SEARCH_FETCH_TIMEOUT_MS=8000
-RAYA_IMAGE_MAX_DIMENSION=1280
-RAYA_IMAGE_JPEG_QUALITY=80
-RAYA_RETRY_ATTEMPTS=3
-RAYA_RETRY_INITIAL_DELAY_MS=1200
-```
-
-For global use from any directory, install the local CLI and put your key in `~/.raya/.env`:
-
-```bash
 npm link
-mkdir -p ~/.raya
-cp .env.example ~/.raya/.env
 raya
 ```
 
-Raya loads all existing environment files in this order, without overriding values already loaded by an earlier file:
-
-1. `.env` in the current directory
-2. `~/.raya/.env`
-3. `.env` next to the installed package
-
-That means a project-local `.env` can override global defaults, while `~/.raya/.env` still fills missing values like `OPENROUTER_API_KEY` when you launch `raya` from any directory.
-
-## Config
-
-Raya creates `~/.raya/config.json` automatically on first launch. You can also copy the example:
+## First Run
 
 ```bash
-mkdir -p ~/.raya
-cp config.example.json ~/.raya/config.json
+raya login
+raya
 ```
 
-Config precedence:
+`raya login` first shows a provider menu. Choose one of the common providers or type any provider id from `raya providers`.
 
-1. `~/.raya/config.json`
-2. `.raya/config.json` in the current workspace
-3. `raya.config.json` in the current workspace
-4. environment variables like `OPENROUTER_MODEL`
+Credentials are stored in:
 
-Example:
-
-```json
-{
-  "model": "google/gemma-4-31b-it:free",
-  "models": [
-    "google/gemma-4-31b-it:free",
-    "openai/gpt-4o-mini",
-    "anthropic/claude-3.5-sonnet",
-    "google/gemini-2.0-flash-001"
-  ],
-  "mode": "Chat",
-  "contextTokens": 128000,
-  "search": {
-    "maxResults": 5,
-    "pageChars": 6000,
-    "fetchTimeoutMs": 8000
-  },
-  "images": {
-    "maxDimension": 1280,
-    "jpegQuality": 80
-  },
-  "retries": {
-    "maxAttempts": 3,
-    "initialDelayMs": 1200
-  },
-  "openrouter": {
-    "baseURL": "https://openrouter.ai/api/v1",
-    "referer": "https://github.com/haos/raya-agent",
-    "title": "Raya"
-  }
-}
+```text
+~/.raya/auth.json
 ```
 
-Keep `OPENROUTER_API_KEY` in `.env` unless you explicitly want to store it in config.
+Raya writes the file with `0600` permissions. Basic config is stored in:
+
+```text
+~/.raya/config.json
+```
+
+Set `RAYA_HOME=/custom/path` to move both files, which is useful in CI and isolated test environments.
+
+## CLI
+
+```bash
+raya                 # interactive TUI
+raya "fix tests"    # one-shot prompt
+raya --run-model gpt-5.4-mini "fix tests"
+raya login          # provider menu, then login
+raya login openai-codex
+raya login anthropic
+raya logout         # remove local provider credential
+raya status         # show config/auth status
+raya providers      # list built-in providers
+raya models         # list configured provider models
+raya models --provider openrouter
+raya config --model gpt-5.4-mini
+raya config --provider anthropic --model claude-sonnet-4-5 --mode edit
+```
+
+In the interactive terminal UI:
+
+- `/exit` quits.
+- `/clear` resets the current conversation.
+- Model output streams in real time.
+- Tool calls and tool results are shown inline.
+
+Slash commands:
+
+```text
+/help                         show commands
+/providers                    list providers
+/login [provider]             login/add provider credential
+/provider <provider>           switch provider
+/models [provider]             list models
+/model <model>                 switch model
+/mode plan|edit                switch Plan/Edit mode
+/sessions                     list sessions
+/session new [name]            create session
+/session switch <id|name>      switch session
+/status                       show current config
+/clear                        clear current session messages
+/exit                         quit
+```
+
+## Architecture
+
+Main modules:
+
+- `src/cli/index.ts` - CLI entry and commands.
+- `src/providers/runtime.ts` - adapter around the built-in `@earendil-works/pi-ai` provider catalog.
+- `src/providers/file-credential-store.ts` - local `CredentialStore` for `~/.raya/auth.json`.
+- `src/session/store.ts` - local session storage for `~/.raya/sessions.json`.
+- `src/agent/create-agent.ts` - `@earendil-works/pi-agent-core.Agent` wiring.
+- `src/tools/*` - extensible tools using a single `Tool { name, description, parameters, execute() }` contract.
+- `src/tui/*` - minimal terminal UI using `readline` plus `@earendil-works/pi-tui` display utilities.
+- `install.sh` - macOS/Linux installer for `curl | bash`.
+
+The current agent loop is provided by `@earendil-works/pi-agent-core.Agent`. Raya supplies the model stream function from `pi-ai`, the system prompt, tool registry, and terminal event renderer.
+
+## Tools
+
+v1 includes:
+
+- `shell` - runs shell commands in the current working directory.
+- `web` - searches the web through DuckDuckGo HTML results or fetches a URL and returns text excerpts.
+- `list_files` - lists workspace files.
+- `read_file` - reads workspace text files.
+- `write_file` - writes workspace text files, only in Edit mode.
 
 Modes:
 
-- `Chat` — normal chat, no autonomous tools.
-- `Plan` — Raya can inspect files and run safe/read-only bash commands, then produce a plan. It cannot write files.
-- `Build` — Raya can read files, edit/write files, and run bash commands inside the workspace.
+- `Plan` - read/investigate mode. File tools are read-only, and shell blocks obvious mutating commands.
+- `Edit` - change mode. Adds `write_file` and allows normal shell execution.
 
-You can set startup mode with config `mode` or `RAYA_MODE=Chat|Plan|Build`. In interactive mode, press `Tab` to cycle modes: `Chat → Plan → Build → Chat`.
+New tools should implement `RayaTool` from `src/types/tool.ts` and be registered in `src/tools/index.ts`.
 
-Run in development:
+## Assumptions
 
-```bash
-npm run dev
-```
+- Project name is `Raya`; no rename was needed.
+- The npm package name is `@sdh4114/raya` because the unscoped `raya` package name is already taken on npm. The installed binary is still `raya`.
+- Node.js 22 is the baseline for v1 because the current dependency stack builds and runs on Node 22 LTS, while newer Node 24 installations also work.
+- `@earendil-works/pi-ai` is the source of truth for provider auth, model catalogs, and token refresh.
+- `@earendil-works/pi-tui` is reused for terminal text utilities, while v1 keeps rendering intentionally small instead of building a full-screen TUI.
+- The install script installs from GitHub source and builds locally because the package is not assumed to be published to npm yet.
 
-Build and run:
+## Known Limitations
 
-```bash
-npm run build
-npm start
-```
+- Shell execution is not fully sandboxed. Treat `shell` as equivalent to the user running the command in their terminal.
+- The web search tool uses public DuckDuckGo HTML pages and can be rate-limited or blocked.
+- There is no plugin loader. Tools have a clear extension point, but loading third-party extensions is out of scope.
 
-Install the local `raya` command globally:
+## TODO v2
 
-```bash
-npm run build
-npm link
-raya
-```
+- Add command approval and sandboxing for shell.
+- Add a plugin/extension loader after the tool API stabilizes.
+- Replace the minimal TUI with a richer full-screen renderer if `pi-tui` exposes the right high-level app primitives for this workflow.
 
-## Commands
+## License
 
-- `/exit` - quit the chat
-- `/read path` - read a workspace file, print it, and add it to the current chat context
-- `/write path` - overwrite a workspace file with multiline input; finish with `.end`, cancel with `.cancel`
-- `/append path` - append multiline input to a workspace file; finish with `.end`, cancel with `.cancel`
-- `/bash command` - run a shell command in the current workspace and add stdout/stderr to context
-- `/search query` - search the web, fetch linked pages, add page excerpts to the current context, and answer with sources
-- `/model` - open model picker
-- `/model model-id` - switch to a model directly
-
-File and agent tools are scoped to the current workspace. Press `Tab` to switch mode; type `/` in interactive mode to see the command list.
-
-## Clipboard Images
-
-Copy an image on macOS, then paste it into Raya while writing a message:
-
-```text
-> what is on this screenshot? [Image 1]
-```
-
-Raya converts clipboard images to compressed JPEG, inserts placeholders like `[Image 1]`, `[Image 2]`, and sends them to the current OpenRouter model as multimodal input. The selected model must support images.
-
-Images are resized before sending to avoid oversized base64 payloads and reduce provider failures.
-
-## Web Context
-
-`/search` is current-session context, not long-term memory. Raya searches the web, opens the top result pages, extracts text excerpts, and inserts those excerpts into the model context for the current conversation.
-
-Raya also auto-searches when the message clearly asks for current or web-dependent information, for example latest news, current prices, weather, recent releases, or explicit requests like “найди”, “поищи”, “посмотри в интернете”.
-
-If a page blocks fetching or returns unsupported content, Raya marks it as `snippet only` and uses the search snippet as a weak fallback.
-
-## Runtime Stats
-
-After each answer Raya prints approximate runtime stats:
-
-```text
-stats › 18.4 tok/s · context 2.1k/128.0k (1.6%) · answer 420 tokens
-```
-
-Token counts are estimated locally, so they are useful for tracking context pressure, answer size, and speed, not exact billing.
+MIT
