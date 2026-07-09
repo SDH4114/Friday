@@ -8,6 +8,7 @@ Codename: Friday.
 
 ```bash
 npm install
+npm run build
 cp .env.example .env
 ```
 
@@ -17,6 +18,7 @@ Add your OpenRouter API key to `.env`:
 OPENROUTER_API_KEY=your_openrouter_api_key_here
 OPENROUTER_MODEL=google/gemma-4-31b-it:free
 OPENROUTER_CONTEXT_TOKENS=128000
+RAYA_MODE=Chat
 RAYA_SEARCH_MAX_RESULTS=5
 RAYA_SEARCH_PAGE_CHARS=6000
 RAYA_SEARCH_FETCH_TIMEOUT_MS=8000
@@ -26,18 +28,22 @@ RAYA_RETRY_ATTEMPTS=3
 RAYA_RETRY_INITIAL_DELAY_MS=1200
 ```
 
-For global use from any directory, put the same values in `~/.raya/.env`:
+For global use from any directory, install the local CLI and put your key in `~/.raya/.env`:
 
 ```bash
+npm link
 mkdir -p ~/.raya
 cp .env.example ~/.raya/.env
+raya
 ```
 
-Raya loads environment values in this order:
+Raya loads all existing environment files in this order, without overriding values already loaded by an earlier file:
 
 1. `.env` in the current directory
 2. `~/.raya/.env`
 3. `.env` next to the installed package
+
+That means a project-local `.env` can override global defaults, while `~/.raya/.env` still fills missing values like `OPENROUTER_API_KEY` when you launch `raya` from any directory.
 
 ## Config
 
@@ -91,6 +97,14 @@ Example:
 
 Keep `OPENROUTER_API_KEY` in `.env` unless you explicitly want to store it in config.
 
+Modes:
+
+- `Chat` — normal chat, no autonomous tools.
+- `Plan` — Raya can inspect files and run safe/read-only bash commands, then produce a plan. It cannot write files.
+- `Build` — Raya can read files, edit/write files, and run bash commands inside the workspace.
+
+You can set startup mode with config `mode` or `RAYA_MODE=Chat|Plan|Build`. In interactive mode, press `Tab` to cycle modes: `Chat → Plan → Build → Chat`.
+
 Run in development:
 
 ```bash
@@ -104,9 +118,10 @@ npm run build
 npm start
 ```
 
-Install the local `raya` command:
+Install the local `raya` command globally:
 
 ```bash
+npm run build
 npm link
 raya
 ```
@@ -114,11 +129,15 @@ raya
 ## Commands
 
 - `/exit` - quit the chat
+- `/read path` - read a workspace file, print it, and add it to the current chat context
+- `/write path` - overwrite a workspace file with multiline input; finish with `.end`, cancel with `.cancel`
+- `/append path` - append multiline input to a workspace file; finish with `.end`, cancel with `.cancel`
+- `/bash command` - run a shell command in the current workspace and add stdout/stderr to context
 - `/search query` - search the web, fetch linked pages, add page excerpts to the current context, and answer with sources
 - `/model` - open model picker
 - `/model model-id` - switch to a model directly
 
-Type `/` in interactive mode to see the command list.
+File and agent tools are scoped to the current workspace. Press `Tab` to switch mode; type `/` in interactive mode to see the command list.
 
 ## Clipboard Images
 
