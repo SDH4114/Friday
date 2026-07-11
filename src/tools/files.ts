@@ -2,7 +2,7 @@ import { Type } from "@earendil-works/pi-ai";
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { mkdirSync } from "node:fs";
-import type { RayaTool } from "../types/tool.js";
+import type { RayaTool, ToolExecutionPolicy } from "../types/tool.js";
 
 const ReadFileParameters = Type.Object({
   path: Type.String({ description: "Workspace-relative file path to read." })
@@ -48,7 +48,7 @@ export function createReadFileTool(): RayaTool<typeof ReadFileParameters, { path
   };
 }
 
-export function createWriteFileTool(): RayaTool<typeof WriteFileParameters, { path: string; bytes: number }> {
+export function createWriteFileTool(policy: ToolExecutionPolicy = {}): RayaTool<typeof WriteFileParameters, { path: string; bytes: number }> {
   return {
     name: "write_file",
     label: "Write file",
@@ -56,6 +56,7 @@ export function createWriteFileTool(): RayaTool<typeof WriteFileParameters, { pa
     parameters: WriteFileParameters,
     executionMode: "sequential",
     async execute(_toolCallId, params) {
+      await policy.confirmDangerousAction?.("write file", params.path);
       const path = workspacePath(params.path);
       mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, params.content, "utf8");

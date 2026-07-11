@@ -19,6 +19,7 @@ import { createDefaultTools } from "../tools/index.js";
 import { renderAgentEvent } from "../tui/render-events.js";
 import { runInteractiveTui } from "../tui/app.js";
 import { color, theme } from "../tui/theme.js";
+import { startTelegramService } from "../telegram/service.js";
 import { homedir } from "node:os";
 import { relative } from "node:path";
 import {
@@ -31,7 +32,7 @@ import {
 } from "../session/store.js";
 
 const program = new Command();
-const VERSION = "0.1.1";
+const VERSION = "0.2.0";
 
 function formatDirectory(path: string): string {
   const home = homedir();
@@ -39,11 +40,7 @@ function formatDirectory(path: string): string {
 }
 
 const preferredProviders = [
-  { id: "anthropic", label: "Anthropic API", hint: "Claude with ANTHROPIC_API_KEY or stored key" },
-  { id: "openai", label: "ChatGPT / OpenAI API", hint: "OpenAI API key" },
-  { id: "openai-codex", label: "Codex", hint: "ChatGPT/Codex OAuth subscription login" },
-  { id: "opencode", label: "OpenCode Zen", hint: "OpenCode API key" },
-  { id: "openrouter", label: "OpenRouter", hint: "OpenRouter API key" }
+  { id: "openai-codex", label: "OpenAI Codex", hint: "ChatGPT/Codex OAuth subscription login" }
 ];
 
 function authLabel(provider: { auth: { oauth?: unknown; apiKey?: unknown } }): string {
@@ -66,11 +63,6 @@ function printProviderMenu(runtime: ReturnType<typeof createProviderRuntime>): v
     index += 1;
   }
 
-  console.log("\nOther providers:");
-  for (const provider of [...providers].sort((a, b) => a.id.localeCompare(b.id))) {
-    if (preferredProviders.some((item) => item.id === provider.id)) continue;
-    console.log(`- ${provider.id} - ${provider.name} - ${authLabel(provider)}`);
-  }
 }
 
 async function chooseProvider(runtime: ReturnType<typeof createProviderRuntime>, fallback: string): Promise<string> {
@@ -104,6 +96,24 @@ function commandOptions<T extends Record<string, unknown>>(value: unknown): T {
   return (value ?? {}) as T;
 }
 
+function lastAssistantText(agent: Agent): string {
+  const message = [...agent.state.messages].reverse().find((item) => item.role === "assistant") as { content?: Array<{ type: string; text?: string }> } | undefined;
+  return message?.content?.filter((item) => item.type === "text").map((item) => item.text ?? "").join("") ?? "";
+}
+
+async function configureTelegramOnFirstRun(config: RayaConfig): Promise<RayaConfig> {
+  if (config.telegramBotToken) return config;
+  const rl = readline.createInterface({ input, output });
+  try {
+    const token = (await rl.question("Telegram bot token (optional; press Enter to skip) > ")).trim();
+    if (!token) return config;
+    const allowedChatId = (await rl.question("Telegram chat ID to allow (optional; press Enter to allow any chat) > ")).trim();
+    return { ...config, telegramBotToken: token, telegramAllowedChatId: allowedChatId || undefined };
+  } finally {
+    rl.close();
+  }
+}
+
 program
   .name("raya")
   .description("Open-source AI coding agent harness for the terminal.")
@@ -112,7 +122,7 @@ program
 program
   .command("login")
   .argument("[provider]", "Provider id to login. Defaults to configured provider.")
-  .description("Login to a provider. Without an argument, shows a provider menu first.")
+  .description("Login to OpenAI Codex through the ChatGPT/Codex OAuth flow.")
   .action(async (providerArg?: string) => {
     const config = loadConfig();
     const runtime = createProviderRuntime();
@@ -201,6 +211,7 @@ program
   .option("--run-model <model>", "Override model for this one-shot or interactive run.")
   .action(async (promptParts: string[], rawOptions: unknown) => {
     const options = commandOptions<{ runModel?: string }>(rawOptions);
+    const prompt = promptParts.join(" ").trim();
     let config = loadConfig();
     const runtime = createProviderRuntime();
     let session = getOrCreateActiveSession(config);
@@ -212,6 +223,13 @@ program
       console.log(color(`No credential found for ${config.provider}. Starting login.\n`, theme.yellow));
       await loginProvider(runtime, config.provider);
       console.log(color("Login complete.\n", theme.green));
+    }
+
+    if (!prompt) {
+      config = await configureTelegramOnFirstRun(config);
+      session.config = config;
+      saveConfig(config);
+      saveSession(session);
     }
 
     const agent = createRayaAgent({
@@ -372,8 +390,6 @@ program
       console.log(`Unknown command: /${name}. Use /help.`);
     };
 
-    const prompt = promptParts.join(" ").trim();
-
     if (prompt) {
       await agent.prompt(prompt);
       await agent.waitForIdle();
@@ -382,16 +398,46 @@ program
       return;
     }
 
-    await runInteractiveTui(agent, {
-      model: model.name,
-      mode: config.mode === "plan" ? "Plan" : "Edit",
-      directory: formatDirectory(process.cwd()),
-      memory: "Enabled",
-      session: `${session.id} ${session.name}`
-    }, {
-      onCommand: ({ agent: activeAgent, command }) => handleCommand(activeAgent, command),
-      onAfterPrompt: (activeAgent) => persist(activeAgent)
-    });
+    const telegram = config.telegramBotToken ? startTelegramService({
+      token: config.telegramBotToken,
+      allowedChatId: config.telegramAllowedChatId,
+      onError: (error) => console.error(color(`Telegram: ${error.message}`, theme.red)),
+      onPrompt: async (remotePrompt, toolPolicy) => {
+        let streamed = "";
+        const remoteAgent = createRayaAgent({
+          config,
+          model,
+          models: runtime.models,
+          toolPolicy,
+          onEvent: (event) => {
+            if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
+              streamed += event.assistantMessageEvent.delta;
+            }
+          }
+        });
+        remoteAgent.state.messages = session.messages;
+        await remoteAgent.prompt(remotePrompt);
+        await remoteAgent.waitForIdle();
+        persist(remoteAgent);
+        return streamed || lastAssistantText(remoteAgent);
+      }
+    }) : undefined;
+
+    if (telegram) console.log(color("Telegram listener started for this Raya session.", theme.cyan));
+    try {
+      await runInteractiveTui(agent, {
+        model: model.name,
+        mode: config.mode === "plan" ? "Plan" : "Edit",
+        directory: formatDirectory(process.cwd()),
+        memory: "Enabled",
+        session: `${session.id} ${session.name}`
+      }, {
+        onCommand: ({ agent: activeAgent, command }) => handleCommand(activeAgent, command),
+        onAfterPrompt: (activeAgent) => persist(activeAgent)
+      });
+    } finally {
+      await telegram?.stop();
+    }
   });
 
 program.parseAsync().catch((error: unknown) => {

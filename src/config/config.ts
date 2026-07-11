@@ -9,7 +9,9 @@ const ConfigSchema = z.object({
   thinkingLevel: z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]).default("minimal"),
   shellTimeoutMs: z.number().int().positive().default(120_000),
   webTimeoutMs: z.number().int().positive().default(15_000),
-  webMaxChars: z.number().int().positive().default(12_000)
+  webMaxChars: z.number().int().positive().default(12_000),
+  telegramBotToken: z.string().min(1).optional(),
+  telegramAllowedChatId: z.string().optional()
 });
 
 export type RayaConfig = z.infer<typeof ConfigSchema>;

@@ -6,6 +6,7 @@ export const RAYA_HOME = process.env.RAYA_HOME ?? join(homedir(), ".raya");
 export const RAYA_AUTH_PATH = join(RAYA_HOME, "auth.json");
 export const RAYA_CONFIG_PATH = join(RAYA_HOME, "config.json");
 export const RAYA_SESSIONS_PATH = join(RAYA_HOME, "sessions.json");
+export const RAYA_MEMORY_DIR = join(RAYA_HOME, "memory");
 
 export function ensureRayaHome(): void {
   if (!existsSync(RAYA_HOME)) {

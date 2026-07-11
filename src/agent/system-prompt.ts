@@ -1,4 +1,16 @@
-export const RAYA_SYSTEM_PROMPT = `You are Raya, an AI coding agent running in a user's terminal.
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+
+function loadWorkspaceInstruction(name: "AGENTS.md" | "SOUL.md"): string | undefined {
+  const path = join(process.cwd(), name);
+  if (!existsSync(path)) return undefined;
+  return readFileSync(path, "utf8").slice(0, 24_000);
+}
+
+export function createSystemPrompt(): string {
+  const agents = loadWorkspaceInstruction("AGENTS.md");
+  const soul = loadWorkspaceInstruction("SOUL.md");
+  return `You are Raya, a personal AI PC assistant and coding agent running in a user's terminal.
 
 Work as a pragmatic senior engineer. Prefer inspecting the workspace with tools before changing assumptions.
 
@@ -15,4 +27,9 @@ Rules:
 - Edit mode is for making changes.
 - Shell commands are not fully sandboxed in v1. Avoid destructive commands unless the user clearly asked for them.
 - When using web results, cite source URLs in your final answer.
-- Stop when the user's task is handled, and summarize changes plus verification.`;
+- Stop when the user's task is handled, and summarize changes plus verification.
+- Reply in the same natural language as the user's latest request whenever possible.
+
+${agents ? `## Workspace instructions (AGENTS.md)\n${agents}` : ""}
+${soul ? `## Raya personality (SOUL.md, user-authored)\n${soul}` : ""}`;
+}

@@ -1,7 +1,7 @@
 import { Type } from "@earendil-works/pi-ai";
 import { spawn } from "node:child_process";
 import type { RayaConfig } from "../config/config.js";
-import type { RayaTool } from "../types/tool.js";
+import type { RayaTool, ToolExecutionPolicy } from "../types/tool.js";
 
 const ShellParameters = Type.Object({
   command: Type.String({
@@ -25,18 +25,21 @@ function truncate(value: string, maxChars: number): string {
   return `${value.slice(0, maxChars)}\n\n[truncated ${value.length - maxChars} chars]`;
 }
 
+function isDangerous(command: string): boolean {
+  return /\b(rm|mv|cp|touch|mkdir|rmdir|chmod|chown|kill|pkill|git\s+(commit|push|reset|checkout|clean|merge|rebase)|npm\s+(install|uninstall|update|link)|pnpm\s+(install|add|remove)|yarn\s+(add|remove|install))\b/.test(command);
+}
+
 function assertAllowedInMode(command: string, mode: RayaConfig["mode"]): void {
   if (mode !== "plan") {
     return;
   }
 
-  const blocked = /\b(rm|mv|cp|touch|mkdir|rmdir|chmod|chown|git\s+(commit|push|reset|checkout|clean|merge|rebase)|npm\s+(install|uninstall|update|link)|pnpm\s+(install|add|remove)|yarn\s+(add|remove|install))\b/;
-  if (blocked.test(command)) {
+  if (isDangerous(command)) {
     throw new Error("Plan mode allows read-only shell commands only. Switch to Edit mode with /mode edit.");
   }
 }
 
-export function createShellTool(config: RayaConfig): RayaTool<typeof ShellParameters, ShellDetails> {
+export function createShellTool(config: RayaConfig, policy: ToolExecutionPolicy = {}): RayaTool<typeof ShellParameters, ShellDetails> {
   return {
     name: "shell",
     label: "Shell",
@@ -46,6 +49,7 @@ export function createShellTool(config: RayaConfig): RayaTool<typeof ShellParame
     executionMode: "sequential",
     async execute(_toolCallId, params, signal) {
       assertAllowedInMode(params.command, config.mode);
+      if (isDangerous(params.command)) await policy.confirmDangerousAction?.("run shell command", params.command);
       const result = await new Promise<ShellDetails>((resolve) => {
         const child = spawn(params.command, {
           cwd: process.cwd(),

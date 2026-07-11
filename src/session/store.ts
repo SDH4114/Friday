@@ -1,8 +1,9 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { ensureRayaHome, RAYA_SESSIONS_PATH } from "../config/paths.js";
+import { ensureRayaHome, RAYA_MEMORY_DIR, RAYA_SESSIONS_PATH } from "../config/paths.js";
 import type { RayaConfig } from "../config/config.js";
+import { memorySkillHook } from "../memory/skill.js";
 
 export type RayaSession = {
   id: string;
@@ -31,6 +32,20 @@ function writeSessionFile(file: SessionFile): void {
   writeFileSync(RAYA_SESSIONS_PATH, `${JSON.stringify(file, null, 2)}\n`, { mode: 0o600 });
 }
 
+function markdownTranscript(session: RayaSession): string {
+  const when = new Date(session.updatedAt).toISOString();
+  const messages = session.messages.map((message) => `\n## ${message.role}\n\n\`\`\`json\n${JSON.stringify(message, null, 2)}\n\`\`\``).join("\n");
+  return `# Raya session: ${session.name}\n\n- id: ${session.id}\n- created: ${new Date(session.createdAt).toISOString()}\n- updated: ${when}\n- model: ${session.config.provider}/${session.config.model}\n- mode: ${session.config.mode}\n${messages}\n`;
+}
+
+function persistReadableTranscript(session: RayaSession): void {
+  const day = new Date(session.updatedAt).toISOString().slice(0, 10);
+  const directory = `${RAYA_MEMORY_DIR}/sessions/${day}`;
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  writeFileSync(`${directory}/${session.id}.md`, markdownTranscript(session), { mode: 0o600 });
+  void memorySkillHook?.onSessionSaved(session);
+}
+
 export function getOrCreateActiveSession(config: RayaConfig): RayaSession {
   const file = readSessionFile();
   const active = file.sessions.find((session) => session.id === file.activeSessionId);
@@ -50,6 +65,7 @@ export function getOrCreateActiveSession(config: RayaConfig): RayaSession {
   file.sessions.unshift(session);
   file.activeSessionId = session.id;
   writeSessionFile(file);
+  persistReadableTranscript(session);
   return session;
 }
 
@@ -68,6 +84,7 @@ export function saveSession(session: RayaSession): void {
   }
   file.activeSessionId = next.id;
   writeSessionFile(file);
+  persistReadableTranscript(next);
 }
 
 export function createSession(config: RayaConfig, name?: string): RayaSession {
@@ -84,6 +101,7 @@ export function createSession(config: RayaConfig, name?: string): RayaSession {
   file.sessions.unshift(session);
   file.activeSessionId = session.id;
   writeSessionFile(file);
+  persistReadableTranscript(session);
   return session;
 }
 

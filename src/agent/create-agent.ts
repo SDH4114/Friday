@@ -2,20 +2,22 @@ import { Agent, type AgentEvent, type AgentMessage } from "@earendil-works/pi-ag
 import type { Models, Model } from "@earendil-works/pi-ai";
 import type { RayaConfig } from "../config/config.js";
 import { createDefaultTools } from "../tools/index.js";
-import { RAYA_SYSTEM_PROMPT } from "./system-prompt.js";
+import type { ToolExecutionPolicy } from "../types/tool.js";
+import { createSystemPrompt } from "./system-prompt.js";
 
 export function createRayaAgent(input: {
   config: RayaConfig;
   model: Model<any>;
   models: Models;
   onEvent: (event: AgentEvent) => Promise<void> | void;
+  toolPolicy?: ToolExecutionPolicy;
 }): Agent {
   const agent = new Agent({
     initialState: {
-      systemPrompt: RAYA_SYSTEM_PROMPT,
+      systemPrompt: createSystemPrompt(),
       model: input.model,
       thinkingLevel: input.config.thinkingLevel,
-      tools: createDefaultTools(input.config),
+      tools: createDefaultTools(input.config, input.toolPolicy),
       messages: []
     },
     streamFn: (model, context, options) => input.models.streamSimple(model, context, options),

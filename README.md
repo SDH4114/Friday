@@ -1,20 +1,24 @@
 # Raya
 
-Raya is an open-source AI coding agent harness for the terminal. It is built as a TypeScript/Node.js npm CLI and uses the `earendil-works/pi` packages for model access, OpenAI Codex OAuth, and the base agent runtime.
+Raya is an MIT-licensed, open-source personal AI PC assistant and coding-agent harness for macOS and Linux. It is deliberately built for a useful daily workflow: one terminal session can work on code, inspect and edit local files, run shell commands, search the web, control applications, and optionally stay reachable through your own Telegram bot.
 
-Raya defaults to OpenAI Codex through ChatGPT Plus/Pro/Codex OAuth, and can also connect to other `pi-ai` providers such as Anthropic API, OpenAI API, OpenCode Zen, and OpenRouter.
+Raya v1 uses **OpenAI Codex via ChatGPT Plus/Pro/Codex OAuth**. It uses the `@earendil-works/pi-ai` provider adapter and `@earendil-works/pi-agent-core` runtime rather than reimplementing OAuth or an agent loop.
 
 ## Install
 
-From the `prime` branch:
+macOS and Linux only (Windows is not supported in v1):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/SDH4114/Friday/prime/install.sh | bash
 ```
 
-The installer supports macOS and Linux. It checks for Node.js 22+, installs Node 22 through `nvm` when needed, clones this repository, builds the CLI, and installs `raya` globally with npm.
+The installer installs Node.js 22 with `nvm` if needed, downloads the repository, builds it, and installs the `raya` binary globally. This GitHub-source approach works before the npm package is published. After publishing `@sdh4114/raya`, the equivalent install is:
 
-Manual development install:
+```bash
+npm install -g @sdh4114/raya
+```
+
+For development:
 
 ```bash
 npm install
@@ -23,125 +27,111 @@ npm link
 raya
 ```
 
-## First Run
+## First run
 
 ```bash
-raya login
 raya
 ```
 
-`raya login` first shows a provider menu. Choose one of the common providers or type any provider id from `raya providers`.
-
-Credentials are stored in:
-
-```text
-~/.raya/auth.json
-```
-
-Raya writes the file with `0600` permissions. Basic config is stored in:
-
-```text
-~/.raya/config.json
-```
-
-Set `RAYA_HOME=/custom/path` to move both files, which is useful in CI and isolated test environments.
-
-## CLI
+If Raya has no credential it opens the OpenAI Codex OAuth flow. Complete it with the ChatGPT/Codex account that has your subscription. The first interactive launch also offers an optional Telegram bot token and optional allowed chat ID; no manual config editing is needed.
 
 ```bash
-raya                 # interactive TUI
-raya "fix tests"    # one-shot prompt
-raya --run-model gpt-5.4-mini "fix tests"
-raya login          # provider menu, then login
-raya login openai-codex
-raya login anthropic
-raya logout         # remove local provider credential
-raya status         # show config/auth status
-raya providers      # list built-in providers
-raya models         # list configured provider models
-raya models --provider openrouter
-raya config --model gpt-5.4-mini
-raya config --provider anthropic --model claude-sonnet-4-5 --mode edit
+raya login             # repeat OAuth login
+raya "explain this repository"  # one-shot prompt
+raya status
+raya models
 ```
 
-In the interactive terminal UI:
+The terminal UI is intentionally English and has a calm blue/gray palette. Model output streams live, tools and their results render inline, and Raya answers in the language of the user's request.
 
-- `/exit` quits.
-- `/clear` resets the current conversation.
-- Model output streams in real time.
-- Tool calls and tool results are shown inline.
-
-Slash commands:
+Useful interactive commands:
 
 ```text
-/help                         show commands
-/providers                    list providers
-/login [provider]             login/add provider credential
-/provider <provider>           switch provider
-/models [provider]             list models
-/model <model>                 switch model
-/mode plan|edit                switch Plan/Edit mode
-/sessions                     list sessions
-/session new [name]            create session
-/session switch <id|name>      switch session
-/status                       show current config
-/clear                        clear current session messages
-/exit                         quit
+/help
+/mode plan|edit
+/models
+/model <model>
+/sessions
+/session new [name]
+/session switch <id|name>
+/clear
+/exit
 ```
-
-## Architecture
-
-Main modules:
-
-- `src/cli/index.ts` - CLI entry and commands.
-- `src/providers/runtime.ts` - adapter around the built-in `@earendil-works/pi-ai` provider catalog.
-- `src/providers/file-credential-store.ts` - local `CredentialStore` for `~/.raya/auth.json`.
-- `src/session/store.ts` - local session storage for `~/.raya/sessions.json`.
-- `src/agent/create-agent.ts` - `@earendil-works/pi-agent-core.Agent` wiring.
-- `src/tools/*` - extensible tools using a single `Tool { name, description, parameters, execute() }` contract.
-- `src/tui/*` - minimal terminal UI using `readline` plus `@earendil-works/pi-tui` display utilities.
-- `install.sh` - macOS/Linux installer for `curl | bash`.
-
-The current agent loop is provided by `@earendil-works/pi-agent-core.Agent`. Raya supplies the model stream function from `pi-ai`, the system prompt, tool registry, and terminal event renderer.
 
 ## Tools
 
-v1 includes:
+All tools implement the same `RayaTool` contract (`name`, `description`, JSON schema, `execute()`), so more tools can later be added without changing the agent core.
 
-- `shell` - runs shell commands in the current working directory.
-- `web` - searches the web through DuckDuckGo HTML results or fetches a URL and returns text excerpts.
-- `list_files` - lists workspace files.
-- `read_file` - reads workspace text files.
-- `write_file` - writes workspace text files, only in Edit mode.
+- `shell` — executes commands in the workspace.
+- `web` — DuckDuckGo text search and URL fetch.
+- `list_files`, `read_file`, `write_file` — workspace filesystem access. Writing is available in Edit mode.
+- `app_control` — opens applications and closes named apps/processes on macOS/Linux.
 
-Modes:
+Plan mode blocks common mutating shell commands; Edit mode permits normal local work. This is a convenience policy, not a security sandbox.
 
-- `Plan` - read/investigate mode. File tools are read-only, and shell blocks obvious mutating commands.
-- `Edit` - change mode. Adds `write_file` and allows normal shell execution.
+## AGENTS.md and SOUL.md
 
-New tools should implement `RayaTool` from `src/types/tool.ts` and be registered in `src/tools/index.ts`.
+On every agent creation Raya reads these optional files from the current working directory and appends them to the system context:
 
-## Assumptions
+- `AGENTS.md` contains project instructions.
+- `SOUL.md` is your user-authored Raya personality: tone, style, and character.
 
-- Project name is `Raya`; no rename was needed.
-- The npm package name is `@sdh4114/raya` because the unscoped `raya` package name is already taken on npm. The installed binary is still `raya`.
-- Node.js 22 is the baseline for v1 because the current dependency stack builds and runs on Node 22 LTS, while newer Node 24 installations also work.
-- `@earendil-works/pi-ai` is the source of truth for provider auth, model catalogs, and token refresh.
-- `@earendil-works/pi-tui` is reused for terminal text utilities, while v1 keeps rendering intentionally small instead of building a full-screen TUI.
-- The install script installs from GitHub source and builds locally because the package is not assumed to be published to npm yet.
+`SOUL.md` is not a hidden system prompt; it is deliberately a file you own and may edit at any time.
 
-## Known Limitations
+## Sessions and long-term-memory foundation
 
-- Shell execution is not fully sandboxed. Treat `shell` as equivalent to the user running the command in their terminal.
-- The web search tool uses public DuckDuckGo HTML pages and can be rate-limited or blocked.
-- There is no plugin loader. Tools have a clear extension point, but loading third-party extensions is out of scope.
+Structured session state is stored in `~/.raya/sessions.json`. Every save also creates a readable Markdown transcript under:
 
-## TODO v2
+```text
+~/.raya/memory/sessions/YYYY-MM-DD/<session-id>.md
+```
 
-- Add command approval and sandboxing for shell.
-- Add a plugin/extension loader after the tool API stabilizes.
-- Replace the minimal TUI with a richer full-screen renderer if `pi-tui` exposes the right high-level app primitives for this workflow.
+`src/memory/skill.ts` is the intentionally small hook for a future memory skill to choose which durable facts to extract. The storage and history-reading foundation are complete, but automatic “what should be remembered” logic is **TODO for the user/project** in v1.
+
+Set `RAYA_HOME=/path` to move config, OAuth credentials, sessions, and memory. Raya writes sensitive local files with owner-only permissions where supported.
+
+## Telegram
+
+Create a bot with [@BotFather](https://t.me/BotFather), copy its token, then enter it during Raya's first interactive run. A configured bot receives messages only while the Raya CLI process is running on your computer; it is not a hosted 24/7 service. Closing Raya or turning off the computer makes the bot unavailable—this is an intentional v1 limitation.
+
+For a safer remote path, every dangerous tool action requested from Telegram—shell mutation, writing a file, or closing an application—waits for an inline **Approve** or **Deny** button in the Telegram chat. The action does not proceed on timeout or denial. Set an allowed chat ID during setup to restrict who can talk to the running session; otherwise anyone who knows the bot can send read-only requests, so an allowed chat ID is strongly recommended.
+
+## Architecture
+
+- `src/providers/runtime.ts` — OpenAI Codex-only `pi-ai` OAuth/model adapter.
+- `src/agent/` — system context and `pi-agent-core` loop wiring.
+- `src/tools/` — extensible tool registry.
+- `src/tui/` — streaming terminal UI using `pi-tui` utilities.
+- `src/telegram/service.ts` — same-process Telegram long polling and approval buttons.
+- `src/session/` and `src/memory/` — JSON session state, Markdown transcripts, and memory-skill hook.
+- `src/cli/index.ts` — command entry point and session lifecycle.
+
+## v1 assumptions and known limits
+
+- Only OpenAI/Codex OAuth is supported. The provider boundary is adapter-based so later providers can be added without replacing the agent loop.
+- Shell and filesystem access are **not sandboxed**; run Raya only in a trusted workspace.
+- Web browsing is text search/fetch only: no browser clicking or form automation.
+- Telegram runs in the local CLI process, not on a server.
+- A complete third-party plugin system is out of scope; the tool registry and memory hook are the extension points.
+
+## v2 TODO
+
+- Additional providers (Anthropic and others).
+- Real sandboxing and configurable local approvals.
+- Browser automation.
+- A complete memory-skill policy and plugin loader.
+- Windows support.
+
+## Publishing
+
+Authenticate to npm as the `@sdh4114` maintainer, update the version, then run:
+
+```bash
+npm publish --access public
+```
+
+`prepack` runs the production build. GitHub remains the host for `install.sh`; npm is only the package registry.
 
 ## License
 
-MIT
+[MIT](./LICENSE)

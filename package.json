@@ -1,7 +1,7 @@
 {
   "name": "@sdh4114/raya",
-  "version": "0.1.1",
-  "description": "Raya is an open-source AI coding agent harness for the terminal.",
+  "version": "0.2.0",
+  "description": "Raya is an open-source personal AI PC assistant and coding harness for the terminal.",
   "type": "module",
   "bin": {
     "raya": "./dist/cli/index.js"
@@ -26,7 +26,9 @@
     "coding-agent",
     "cli",
     "codex",
-    "chatgpt"
+    "chatgpt",
+    "telegram",
+    "pc-assistant"
   ],
   "author": "",
   "license": "MIT",
