@@ -1,11 +1,13 @@
 import {
+  type ApiKeyCredential,
+  type Credential,
   type Model,
   type Models,
   type OAuthCredential,
   type Provider,
   createModels
 } from "@earendil-works/pi-ai";
-import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
+import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { nodeAuthContext } from "./auth-context.js";
@@ -18,8 +20,7 @@ export type RayaProviderRuntime = {
 
 export function createProviderRuntime(): RayaProviderRuntime {
   const credentials = new FileCredentialStore();
-  const models = createModels({ credentials, authContext: nodeAuthContext });
-  models.setProvider(openaiCodexProvider());
+  const models = builtinModels({ credentials, authContext: nodeAuthContext });
   return { models, credentials };
 }
 
@@ -53,10 +54,26 @@ export function getConfiguredModel(runtime: RayaProviderRuntime, providerId: str
   return model;
 }
 
-async function promptCredential(provider: Provider): Promise<OAuthCredential> {
+async function promptCredential(provider: Provider): Promise<Credential> {
   const rl = readline.createInterface({ input, output });
 
   try {
+    if (provider.auth.apiKey?.login) {
+      const credential = await provider.auth.apiKey.login({
+        notify(event) { if (event.type === "progress") console.log(event.message); },
+        async prompt(prompt) {
+          if (prompt.type === "select") {
+            console.log(prompt.message);
+            prompt.options.forEach((option, index) => console.log(`${index + 1}. ${option.label}`));
+            const answer = await rl.question("> ");
+            const index = Number(answer.trim());
+            return Number.isInteger(index) && prompt.options[index - 1] ? prompt.options[index - 1]!.id : answer.trim();
+          }
+          return rl.question(`${prompt.message}\n> `);
+        }
+      });
+      return { ...(credential as ApiKeyCredential), type: "api_key" };
+    }
     if (provider.auth.oauth) {
       const credential = await provider.auth.oauth.login({
         notify(event) {
@@ -99,7 +116,7 @@ async function promptCredential(provider: Provider): Promise<OAuthCredential> {
     rl.close();
   }
 
-  throw new Error(`Provider "${provider.id}" does not expose OpenAI Codex OAuth.`);
+  throw new Error(`Provider "${provider.id}" does not expose an interactive API key or OAuth login.`);
 }
 
 export async function loginProvider(runtime: RayaProviderRuntime, providerId: string): Promise<void> {

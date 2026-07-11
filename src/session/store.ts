@@ -24,7 +24,14 @@ function readSessionFile(): SessionFile {
   if (!existsSync(RAYA_SESSIONS_PATH)) {
     return { sessions: [] };
   }
-  return JSON.parse(readFileSync(RAYA_SESSIONS_PATH, "utf8")) as SessionFile;
+  const file = JSON.parse(readFileSync(RAYA_SESSIONS_PATH, "utf8")) as SessionFile;
+  // Migrate session snapshots written before the Edit mode was renamed Build.
+  for (const session of file.sessions) {
+    if ((session.config as { mode?: string }).mode === "edit") {
+      session.config = { ...session.config, mode: "build" };
+    }
+  }
+  return file;
 }
 
 function writeSessionFile(file: SessionFile): void {

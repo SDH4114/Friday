@@ -29,14 +29,32 @@ function isDangerous(command: string): boolean {
   return /\b(rm|mv|cp|touch|mkdir|rmdir|chmod|chown|kill|pkill|git\s+(commit|push|reset|checkout|clean|merge|rebase)|npm\s+(install|uninstall|update|link)|pnpm\s+(install|add|remove)|yarn\s+(add|remove|install))\b/.test(command);
 }
 
+function assertPlanSafe(command: string): void {
+  if (/[|;&><`]|\$\(|\n/.test(command)) {
+    throw new Error("Plan mode only permits simple read-only shell commands.");
+  }
+  const [program, ...args] = command.trim().split(/\s+/);
+  const allowed = new Set(["pwd", "ls", "find", "rg", "grep", "cat", "head", "tail", "wc", "stat", "du", "git"]);
+  if (!program || !allowed.has(program)) throw new Error("Plan mode only permits read-only inspection commands.");
+  if (program === "find" && args.some((arg) => ["-exec", "-execdir", "-delete", "-fprint", "-fprint0"].includes(arg))) {
+    throw new Error("Plan mode does not permit mutating find actions.");
+  }
+  if (program === "git" && !["status", "diff", "log", "show", "branch", "remote"].includes(args[0] ?? "")) {
+    throw new Error("Plan mode only permits read-only git commands.");
+  }
+}
+
 function assertAllowedInMode(command: string, mode: RayaConfig["mode"]): void {
   if (mode !== "plan") {
     return;
   }
+  assertPlanSafe(command);
+}
 
-  if (isDangerous(command)) {
-    throw new Error("Plan mode allows read-only shell commands only. Switch to Edit mode with /mode edit.");
-  }
+function assertNotBlocked(command: string, blockedCommands: string[]): void {
+  const normalized = command.trim();
+  const blocked = blockedCommands.find((entry) => normalized === entry || normalized.startsWith(`${entry} `));
+  if (blocked) throw new Error(`This command is blocked by Raya configuration: ${blocked}`);
 }
 
 export function createShellTool(config: RayaConfig, policy: ToolExecutionPolicy = {}): RayaTool<typeof ShellParameters, ShellDetails> {
@@ -48,6 +66,7 @@ export function createShellTool(config: RayaConfig, policy: ToolExecutionPolicy 
     parameters: ShellParameters,
     executionMode: "sequential",
     async execute(_toolCallId, params, signal) {
+      assertNotBlocked(params.command, config.blockedCommands);
       assertAllowedInMode(params.command, config.mode);
       if (isDangerous(params.command)) await policy.confirmDangerousAction?.("run shell command", params.command);
       const result = await new Promise<ShellDetails>((resolve) => {

@@ -52,7 +52,7 @@ export function createWriteFileTool(policy: ToolExecutionPolicy = {}): RayaTool<
   return {
     name: "write_file",
     label: "Write file",
-    description: "Create or overwrite a text file in the current workspace. Available only in Edit mode.",
+    description: "Create or overwrite a text file in the current workspace. Available only in Build mode.",
     parameters: WriteFileParameters,
     executionMode: "sequential",
     async execute(_toolCallId, params) {
