@@ -21,11 +21,16 @@ export function startTelegramService(input: {
   let running = true;
   let offset = 0;
   let work = Promise.resolve();
+  let retryDelayMs = 1_000;
+  let lastReportedError = "";
+  let lastReportedAt = 0;
+  let pollAbort: AbortController | undefined;
+  let retryWake: (() => void) | undefined;
   const pending = new Map<string, PendingApproval>();
   const api = `https://api.telegram.org/bot${input.token}`;
 
-  async function call<T>(method: string, body: Record<string, unknown>): Promise<T> {
-    const response = await fetch(`${api}/${method}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  async function call<T>(method: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
+    const response = await fetch(`${api}/${method}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal });
     const json = await response.json() as TelegramResponse<T> & { description?: string };
     if (!json.ok) throw new Error(`Telegram ${method}: ${json.description ?? "request failed"}`);
     return json.result;
@@ -33,6 +38,17 @@ export function startTelegramService(input: {
 
   async function send(chatId: number, text: string, keyboard?: unknown): Promise<void> {
     await call("sendMessage", { chat_id: chatId, text: text.slice(0, 4000), ...(keyboard ? { reply_markup: keyboard } : {}) });
+  }
+
+  function startTyping(chatId: number): () => void {
+    let stopped = false;
+    const update = async (): Promise<void> => {
+      if (stopped) return;
+      try { await call("sendChatAction", { chat_id: chatId, action: "typing" }); } catch { /* normal polling reports connectivity */ }
+    };
+    void update();
+    const timer = setInterval(() => void update(), 4_000);
+    return () => { stopped = true; clearInterval(timer); };
   }
 
   function approvalPolicy(chatId: number): ToolExecutionPolicy {
@@ -68,26 +84,46 @@ export function startTelegramService(input: {
       return;
     }
     work = work.then(async () => {
-      await send(message.chat.id, "Raya is working…");
-      const answer = await input.onPrompt(message.text!, approvalPolicy(message.chat.id));
-      await send(message.chat.id, answer || "Completed.");
+      const stopTyping = startTyping(message.chat.id);
+      try {
+        const answer = await input.onPrompt(message.text!, approvalPolicy(message.chat.id));
+        await send(message.chat.id, answer || "Completed.");
+      } finally {
+        stopTyping();
+      }
     }).catch(async (error: unknown) => {
       const messageText = error instanceof Error ? error.message : String(error);
       input.onError?.(error instanceof Error ? error : new Error(messageText));
-      await send(message!.chat.id, `Raya error: ${messageText}`);
+      try { await send(message!.chat.id, `Raya error: ${messageText}`); } catch { /* network error is reported by polling loop */ }
     });
   }
 
   const loop = (async () => {
     while (running) {
       try {
-        const updates = await call<TelegramUpdate[]>("getUpdates", { offset, timeout: 25, allowed_updates: ["message", "callback_query"] });
+        pollAbort = new AbortController();
+        const updates = await call<TelegramUpdate[]>("getUpdates", { offset, timeout: 25, allowed_updates: ["message", "callback_query"] }, pollAbort.signal);
+        retryDelayMs = 1_000;
+        lastReportedError = "";
         for (const update of updates) void handle(update);
       } catch (error) {
-        if (running) input.onError?.(error instanceof Error ? error : new Error(String(error)));
+        if (!running) break;
+        const normalized = error instanceof Error ? error : new Error(String(error));
+        const now = Date.now();
+        if (normalized.message !== lastReportedError || now - lastReportedAt >= 60_000) {
+          input.onError?.(normalized);
+          lastReportedError = normalized.message;
+          lastReportedAt = now;
+        }
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, retryDelayMs);
+          retryWake = () => { clearTimeout(timer); resolve(); };
+        });
+        retryWake = undefined;
+        retryDelayMs = Math.min(retryDelayMs * 2, 30_000);
       }
     }
   })();
 
-  return { async stop() { running = false; await Promise.race([loop, new Promise((resolve) => setTimeout(resolve, 500))]); }, async sendMessage(chatId,text){await send(Number(chatId),text);} };
+  return { async stop() { running = false; pollAbort?.abort(); retryWake?.(); await loop; }, async sendMessage(chatId,text){await send(Number(chatId),text);} };
 }

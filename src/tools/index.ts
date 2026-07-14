@@ -6,9 +6,10 @@ import { createShellTool } from "./shell.js";
 import { createWebTool } from "./web.js";
 import { createMemoryTool } from "./memory.js";
 import { createScheduleTool } from "./schedule.js";
+import { createUseSkillTool } from "./skill.js";
 
 export function createDefaultTools(config: RayaConfig, policy: ToolExecutionPolicy = {}): RayaTool[] {
-  const tools: RayaTool[] = [createListFilesTool(), createReadFileTool(), createShellTool(config, policy), createWebTool(config), createMemoryTool(), createScheduleTool()];
+  const tools: RayaTool[] = [createListFilesTool(), createReadFileTool(), createShellTool(config, policy), createWebTool(config), createMemoryTool(), createScheduleTool(), createUseSkillTool()];
   if (config.mode === "build") {
     tools.push(createWriteFileTool(policy), createAppControlTool(policy));
   }

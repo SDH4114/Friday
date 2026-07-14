@@ -17,16 +17,15 @@ import {
 } from "../providers/runtime.js";
 import { createRayaAgent } from "../agent/create-agent.js";
 import { createDefaultTools } from "../tools/index.js";
-import { renderAgentEvent } from "../tui/render-events.js";
-import { runInteractiveTui } from "../tui/app.js";
-import { requestTerminalApproval } from "../tui/app.js";
+import { formatToolActivity, renderAgentEvent } from "../tui/render-events.js";
+import { notifyTui, requestTerminalApproval, runInteractiveTui } from "../tui/app.js";
 import { color, theme } from "../tui/theme.js";
 import { startTelegramService } from "../telegram/service.js";
 import type { ToolExecutionPolicy } from "../types/tool.js";
 import { startScheduler } from "../scheduler/store.js";
 import { homedir } from "node:os";
-import { relative } from "node:path";
-import { mkdirSync } from "node:fs";
+import { join, relative } from "node:path";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { RAYA_PLUGINS_DIR } from "../config/paths.js";
 import {
@@ -134,12 +133,26 @@ function renderRestoredSession(session: RayaSession): void {
   console.log(color(`${session.config.provider}/${session.config.model} · ${session.config.mode}`, theme.gray));
   console.log();
 
+  let rayaPrinted = false;
   for (const message of session.messages as unknown[]) {
-    const item = message as { role?: string; content?: Array<{ type?: string; text?: string }> };
-    if (item.role !== "user" && item.role !== "assistant") continue;
-    const text = item.content?.filter((content) => content.type === "text").map((content) => content.text ?? "").join("").trim();
-    if (!text) continue;
-    console.log(color(item.role === "user" ? "You" : "Raya", item.role === "user" ? theme.blue : theme.cyan) + `  ${text}\n`);
+    const item = message as { role?: string; content?: Array<{ type?: string; text?: string; name?: string; arguments?: unknown }> };
+    if (item.role === "user") {
+      const text = item.content?.filter((content) => content.type === "text").map((content) => content.text ?? "").join("").trim();
+      if (!text) continue;
+      const mode = session.config.mode === "plan" ? "Plan" : "Build";
+      console.log(`${color(`[${mode}] >`, theme.blue)} ${text}\n`);
+      rayaPrinted = false;
+      continue;
+    }
+    if (item.role !== "assistant") continue;
+    if (!rayaPrinted) {
+      console.log(`${color("Raya", theme.cyan)}\n`);
+      rayaPrinted = true;
+    }
+    for (const content of item.content ?? []) {
+      if (content.type === "text" && content.text?.trim()) console.log(`${content.text.trim()}\n`);
+      if (content.type === "toolCall" && content.name) console.log(color(formatToolActivity(content.name, content.arguments), theme.gray));
+    }
   }
 }
 
@@ -228,15 +241,20 @@ program
 
 program
   .command("gateway")
-  .description("Configure or restart the local Telegram gateway.")
+  .description("Configure, start, or restart the local Telegram gateway.")
   .option("--setup", "Ask for Telegram bot token and allowed chat ID.")
-  .option("--restart", "Start a fresh Telegram gateway connection in this terminal.")
+  .option("--start", "Start the Telegram gateway in this terminal.")
+  .option("--restart", "Restart the Telegram gateway with a fresh connection in this terminal.")
   .action(async (rawOptions: unknown) => {
-    const options = commandOptions<{ setup?: boolean; restart?: boolean }>(rawOptions);
+    const options = commandOptions<{ setup?: boolean; start?: boolean; restart?: boolean }>(rawOptions);
     let config = loadConfig();
     if (options.setup) config = await configureTelegramOnFirstRun(config, true);
-    if (options.restart) await runGateway(config);
-    else if (!options.setup) console.log("Use raya gateway --setup or raya gateway --restart.");
+    if (options.start || options.restart) {
+      if (options.restart) console.log("Restarting Telegram gateway...");
+      await runGateway(config);
+    } else if (!options.setup) {
+      console.log("Use raya gateway --setup, raya gateway --start, or raya gateway --restart.");
+    }
   });
 
 program
@@ -246,7 +264,18 @@ program
   .description("Install or list configured pi packages.")
   .action(async (action:string, packageArg?:string) => {
     const config=loadConfig();
-    if(action==="list"){console.log(config.piPackages.join("\n")||"(none)");return;}
+    if(action==="list"){
+      if(!config.piPackages.length){console.log("(none)");return;}
+      for(const name of config.piPackages){
+        const manifestPath=join(RAYA_PLUGINS_DIR,"node_modules",name,"package.json");
+        if(!existsSync(manifestPath)){console.log(`${name}\tmissing`);continue;}
+        const manifest=JSON.parse(readFileSync(manifestPath,"utf8")) as {pi?:{skills?:string[];extensions?:string[]}};
+        const skills=manifest.pi?.skills?.length?`skills:${manifest.pi.skills.length}`:"skills:0";
+        const extensions=manifest.pi?.extensions?.length?`native-extensions:${manifest.pi.extensions.length} (adapter required)`:"native-extensions:0";
+        console.log(`${name}\t${skills}\t${extensions}`);
+      }
+      return;
+    }
     if(action!=="install"||!packageArg)throw new Error("Usage: raya plugin install npm:<package>");
     const packageName=packageArg.replace(/^npm:/,"");mkdirSync(RAYA_PLUGINS_DIR,{recursive:true,mode:0o700});
     await new Promise<void>((resolve,reject)=>{const child=spawn("npm",["install","--prefix",RAYA_PLUGINS_DIR,packageName],{stdio:"inherit"});child.on("close",code=>code===0?resolve():reject(new Error(`npm exited ${code}`)));child.on("error",reject);});
@@ -329,16 +358,21 @@ program
     const prompt = promptParts.join(" ").trim();
     let config = loadConfig();
     const runtime = createProviderRuntime();
-    let session = getOrCreateActiveSession(config);
-    config = { ...config, ...session.config, mode: session.config.mode ?? config.mode };
-    session.config = config;
+    const connectedProviders = new Set<string>();
+    await Promise.all(runtime.models.getProviders().map(async (provider) => {
+      if (await isProviderConfigured(runtime, provider.id)) connectedProviders.add(provider.id);
+    }));
+    if (options.runModel) config = { ...config, model: options.runModel };
     let model = getConfiguredModel(runtime, config.provider, options.runModel ?? config.model);
 
     if (!(await isProviderConfigured(runtime, config.provider, model.id))) {
       console.log(color(`No credential found for ${config.provider}. Starting login.\n`, theme.yellow));
       await loginProvider(runtime, config.provider);
+      connectedProviders.add(config.provider);
       console.log(color("Login complete.\n", theme.green));
     }
+
+    let session = createSession(config);
 
     if (!prompt) {
       config = await configureTelegramOnFirstRun(config);
@@ -380,11 +414,8 @@ program
     const printHelp = (): void => {
       console.log([
         "/help                         show commands",
-        "/providers                    list providers",
-        "/login [provider]             login/add provider credential",
-        "/provider <provider>           switch provider",
-        "/models [provider]             list models",
-        "/model <model>                 switch model",
+        "/providers                    connect, update, or choose a provider",
+        "/models                       browse and choose models from all providers",
         "/thinking                      choose reasoning level",
         "/security                      choose Standard or Full access",
         "/sessions                     create or open a session",
@@ -403,22 +434,22 @@ program
       }
 
       if (name === "providers") {
-        printProviderMenu(runtime);
-        return;
-      }
-
-      if (name === "login") {
-        const provider = args[0] ?? (await chooseProvider(runtime, config.provider));
-        await loginProvider(runtime, provider);
-        console.log(color("Saved provider OAuth session securely.", theme.green));
-        return;
-      }
-
-      if (name === "provider") {
-        const provider = args[0];
-        if (!provider) {
-          console.log(`Current provider: ${config.provider}`);
+        const action = args[0];
+        const provider = args[1];
+        if (!action || action === "manage" || !provider) {
+          console.log("Use /providers and choose a provider, then Connect / update key or Use provider.");
           return;
+        }
+        if (action === "connect") {
+          await loginProvider(runtime, provider);
+          connectedProviders.add(provider);
+          console.log(color(`${provider} connected. Existing provider credentials were kept.`, theme.green));
+          return;
+        }
+        if (action !== "use") throw new Error("Unknown /providers action.");
+        if (!connectedProviders.has(provider)) {
+          await loginProvider(runtime, provider);
+          connectedProviders.add(provider);
         }
         const firstModel = runtime.models.getModels(provider)[0];
         if (!firstModel) throw new Error(`Provider has no known models: ${provider}`);
@@ -429,25 +460,21 @@ program
       }
 
       if (name === "models") {
-        const provider = args[0] ?? config.provider;
-        for (const item of runtime.models.getModels(provider)) {
-          console.log(`${item.id}\t${item.name}`);
-        }
-        return;
-      }
-
-      if (name === "model") {
-        const modelId = args[0];
-        if (!modelId) {
-          console.log(`Current model: ${config.model}`);
+        if (args[0] !== "select" || !args[1] || !args[2]) {
+          console.log("Use /models and choose a model from the dropdown.");
           return;
         }
-        model = getConfiguredModel(runtime, config.provider, modelId);
-        config = { ...config, model: model.id };
-        applyConfigToAgent(activeAgent, config, model);
+        const provider = args[1];
+        const modelId = args.slice(2).join(" ");
+        if (!connectedProviders.has(provider)) {
+          await loginProvider(runtime, provider);
+          connectedProviders.add(provider);
+        }
+        model = getConfiguredModel(runtime, provider, modelId);
+        config = { ...config, provider, model: model.id };
         persist(activeAgent);
-        console.log(color(`Model: ${model.name}`, theme.green));
-        return;
+        console.log(color(`Model: ${model.name} · ${provider}`, theme.green));
+        return rebuildAgent(session);
       }
 
       if (name === "thinking") {
@@ -524,7 +551,7 @@ program
     const telegram = telegramToken ? startTelegramService({
       token: telegramToken,
       allowedChatId: readSecret("RAYA_TELEGRAM_ALLOWED_CHAT_ID"),
-      onError: (error) => console.error(color(`Telegram: ${error.message}`, theme.red)),
+      onError: (error) => notifyTui(`Telegram unavailable: ${error.message}`),
       onPrompt: async (remotePrompt, toolPolicy) => {
         let streamed = "";
         const remoteAgent = createRayaAgent({
@@ -547,14 +574,27 @@ program
     }) : undefined;
 
     if (telegram) console.log(color("Telegram listener started for this Raya session.", theme.cyan));
-    const stopScheduler = startScheduler((task) => console.log(color(`\nReminder: ${task.message}`, theme.yellow)));
+    const stopScheduler = startScheduler((task) => notifyTui(`Reminder: ${task.message}`));
+    let signalExitStarted = false;
+    const exitImmediately = (): void => {
+      if (signalExitStarted) return;
+      signalExitStarted = true;
+      console.log("\nBye bye");
+      stopScheduler();
+      void telegram?.stop().finally(() => process.exit(0));
+      if (!telegram) process.exit(0);
+    };
+    process.on("SIGINT", exitImmediately);
     try {
       await runInteractiveTui(agent, {
         model: model.name,
         mode: config.mode === "plan" ? "Plan" : "Build",
         directory: formatDirectory(process.cwd()),
         memory: "Enabled",
-        session: `${session.id} ${session.name}`
+        session: `${session.id} ${session.name}`,
+        version: VERSION,
+        contextTokens: 0,
+        contextWindow: model.contextWindow
       }, {
         onCommand: ({ agent: activeAgent, command }) => handleCommand(activeAgent, command),
         onAfterPrompt: (activeAgent) => persist(activeAgent),
@@ -569,9 +609,66 @@ program
           name: item.name,
           detail: `${item.config.provider}/${item.config.model} · ${item.config.mode}`
         })),
-        thinkingSuggestions: () => getSupportedThinkingLevels(model)
+        thinkingSuggestions: () => getSupportedThinkingLevels(model),
+        providerSuggestions: (value) => {
+          const managed = value.match(/^\/providers manage (\S+)\s*$/)?.[1];
+          if (managed) {
+            const connected = connectedProviders.has(managed);
+            return [
+              { value: `/providers use ${managed}`, description: connected ? "Use this connected provider" : "Connect and use this provider" },
+              { value: `/providers connect ${managed}`, description: connected ? "Update API key / reconnect" : "Connect provider" }
+            ];
+          }
+          const query = value === "/providers" ? "" : value.slice("/providers ".length).trim().toLowerCase();
+          const providers = [...runtime.models.getProviders()]
+            .filter((provider) => !query || `${provider.id} ${provider.name}`.toLowerCase().includes(query))
+            .sort((a, b) => a.name.localeCompare(b.name));
+          const suggestion = (provider: typeof providers[number]) => ({
+              value: `/providers manage ${provider.id}`,
+              description: `${provider.name} · ${connectedProviders.has(provider.id) ? "connected" : authLabel(provider)}`,
+              needsArgument: true
+            });
+          const setUped = providers.filter((provider) => connectedProviders.has(provider.id));
+          const others = providers.filter((provider) => !connectedProviders.has(provider.id));
+          return [
+            { value: "SetUped:", description: "", selectable: false },
+            ...(setUped.length ? setUped.map(suggestion) : [{ value: "  (none)", description: "", selectable: false }]),
+            { value: "Others:", description: "", selectable: false },
+            ...(others.length ? others.map(suggestion) : [{ value: "  (none)", description: "", selectable: false }])
+          ];
+        },
+        modelSuggestions: (query) => {
+          const normalized = query.toLowerCase().trim();
+          return runtime.models.getProviders()
+            .flatMap((provider) => runtime.models.getModels(provider.id).map((item) => ({ provider, item })))
+            .filter(({ provider, item }) => !normalized || `${provider.id} ${provider.name} ${item.id} ${item.name}`.toLowerCase().includes(normalized))
+            .sort((a, b) => {
+              const aRank = a.provider.id === config.provider ? 2 : connectedProviders.has(a.provider.id) ? 1 : 0;
+              const bRank = b.provider.id === config.provider ? 2 : connectedProviders.has(b.provider.id) ? 1 : 0;
+              return bRank - aRank || a.provider.name.localeCompare(b.provider.name) || a.item.name.localeCompare(b.item.name);
+            })
+            .map(({ provider, item }) => ({
+              value: `/models select ${provider.id} ${item.id}`,
+              description: `${provider.name} · ${item.name}${provider.id === config.provider && item.id === config.model ? " · active" : ""}`
+            }));
+        },
+        statusInfo: () => {
+          const assistantMessages = session.messages.filter((message) => message.role === "assistant") as Array<{ usage?: { totalTokens?: number } }>;
+          const contextTokens = [...assistantMessages].reverse().find((message) => message.usage?.totalTokens)?.usage?.totalTokens ?? 0;
+          return {
+            model: model.name,
+            mode: config.mode === "plan" ? "Plan" : "Build",
+            directory: formatDirectory(process.cwd()),
+            memory: "Enabled",
+            session: `${session.id} ${session.name}`,
+            version: VERSION,
+            contextTokens,
+            contextWindow: model.contextWindow
+          };
+        }
       });
     } finally {
+      process.off("SIGINT", exitImmediately);
       stopScheduler();
       await telegram?.stop();
     }

@@ -3,6 +3,15 @@ import { emitKeypressEvents } from "node:readline";
 import { spawn } from "node:child_process";
 import { stdin as input, stdout as output } from "node:process";
 import { color, theme } from "./theme.js";
+import { toggleToolActivityDetails, toolActivityDetailLines } from "./tool-activity.js";
+
+let activeNotificationHandler: ((message: string) => void) | undefined;
+let activeRawInputHandler: ((data: Buffer | string) => void) | undefined;
+
+export function notifyTui(message: string): void {
+  if (activeNotificationHandler) activeNotificationHandler(message);
+  else console.log(color(message, theme.yellow));
+}
 
 /** Ask the local terminal user before an agent performs a consequential action. */
 export async function requestTerminalApproval(action: string, details: string): Promise<void> {
@@ -46,6 +55,9 @@ export type TuiSessionInfo = {
   directory: string;
   memory: string;
   session?: string;
+  version: string;
+  contextTokens?: number;
+  contextWindow?: number;
 };
 
 export type SlashCommandContext = {
@@ -63,17 +75,18 @@ type CommandSuggestion = {
   value: string;
   description: string;
   needsArgument?: boolean;
+  selectable?: boolean;
 };
+
+export type TuiCommandSuggestion = CommandSuggestion;
 
 const slashCommands: CommandSuggestion[] = [
   { value: "/help", description: "Show available commands" },
-  { value: "/providers", description: "Show OpenAI Codex provider" },
-  { value: "/login", description: "Login with OpenAI Codex OAuth" },
-  { value: "/models", description: "List available models" },
-  { value: "/model", description: "Switch the active model", needsArgument: true },
-  { value: "/thinking", description: "Set reasoning level", needsArgument: true },
-  { value: "/security", description: "Choose security mode", needsArgument: true },
-  { value: "/sessions", description: "Create or open a saved session", needsArgument: true },
+  { value: "/providers", description: "Connect, update, or choose providers" },
+  { value: "/models", description: "Browse and choose models from all providers" },
+  { value: "/thinking", description: "Set reasoning level" },
+  { value: "/security", description: "Choose security mode" },
+  { value: "/sessions", description: "Create or open a saved session" },
   { value: "/status", description: "Show current status" },
   { value: "/clear", description: "Clear this conversation" },
   { value: "/exit", description: "Exit Raya" }
@@ -110,32 +123,40 @@ function commandSuggestions(
   value: string,
   cursor: number,
   sessionSuggestions: () => TuiSessionSuggestion[] = () => [],
-  thinkingSuggestions: () => string[] = () => []
+  thinkingSuggestions: () => string[] = () => [],
+  providerSuggestions: (value: string) => CommandSuggestion[] = () => [],
+  modelSuggestions: (query: string) => CommandSuggestion[] = () => []
 ): CommandSuggestion[] {
   const sessionPrefix = "/sessions ";
-  if ((value === "/sessions" && cursor === value.length) || (value.startsWith(sessionPrefix) && cursor >= sessionPrefix.length)) {
-    const query = value === "/sessions" ? "" : value.slice(sessionPrefix.length, cursor).toLowerCase();
+  if (value.startsWith(sessionPrefix) && cursor >= sessionPrefix.length) {
+    const query = value.slice(sessionPrefix.length, cursor).toLowerCase();
     const sessions = sessionSuggestions()
       .filter((session) => `${session.id} ${session.name}`.toLowerCase().includes(query))
-      .slice(0, 8)
       .map((session) => ({ value: `/sessions open ${session.id}`, description: `${session.name} · ${session.detail}` }));
     return [{ value: "/sessions new", description: "New session" }, ...sessions];
   }
   const thinkingPrefix = "/thinking ";
-  if ((value === "/thinking" && cursor === value.length) || (value.startsWith(thinkingPrefix) && cursor >= thinkingPrefix.length)) {
+  if (value.startsWith(thinkingPrefix) && cursor >= thinkingPrefix.length) {
     const labels: Record<string, string> = { off: "Off", minimal: "Light", low: "Low", medium: "Medium", high: "High", xhigh: "Ultra" };
     const levels = thinkingSuggestions().map((id) => [id, labels[id] ?? id] as const);
-    const query = value === "/thinking" ? "" : value.slice(thinkingPrefix.length, cursor).toLowerCase();
+    const query = value.slice(thinkingPrefix.length, cursor).toLowerCase();
     return levels.filter(([id, label]) => id.startsWith(query) || label.toLowerCase().startsWith(query))
       .map(([id, label]) => ({ value: `/thinking ${id}`, description: label }));
   }
   const securityPrefix = "/security ";
-  if ((value === "/security" && cursor === value.length) || (value.startsWith(securityPrefix) && cursor >= securityPrefix.length)) {
-    const query = value === "/security" ? "" : value.slice(securityPrefix.length, cursor).toLowerCase();
+  if (value.startsWith(securityPrefix) && cursor >= securityPrefix.length) {
+    const query = value.slice(securityPrefix.length, cursor).toLowerCase();
     return [
       { value: "/security standard", description: "Standard · ask before consequential actions" },
       { value: "/security full", description: "Full access · do not ask for approval" }
     ].filter((item) => item.value.slice(securityPrefix.length).startsWith(query));
+  }
+  if (value.startsWith("/providers ") && cursor === value.length) {
+    return providerSuggestions(value);
+  }
+  if (value.startsWith("/models ") && cursor === value.length) {
+    const query = value.slice("/models ".length);
+    return modelSuggestions(query);
   }
   const start = activeCommandStart(value, cursor);
   if (start === undefined) return [];
@@ -158,97 +179,180 @@ function wordEnd(value: string, cursor: number): number {
 }
 
 /** A one-line editor with a terminal dropdown for slash commands. */
-async function readTuiLine(mode: "Plan" | "Build", sessionSuggestions?: () => TuiSessionSuggestion[], thinkingSuggestions?: () => string[]): Promise<string> {
+type InputDraft = { value: string; cursor: number };
+const MODE_TOGGLE_PREFIX = "__RAYA_TOGGLE_MODE__";
+const EXIT_SIGNAL = "__RAYA_EXIT__";
+const MENU_OPEN_PREFIX = "__RAYA_OPEN_MENU__";
+const MAX_VISIBLE_SUGGESTIONS = 12;
+const MENU_COMMANDS = new Set(["/providers", "/models", "/thinking", "/security", "/sessions"]);
+
+function selectableIndex(suggestions: CommandSuggestion[], start: number, direction: 1 | -1): number {
+  if (!suggestions.some((item) => item.selectable !== false)) return 0;
+  let index = start;
+  for (let attempts = 0; attempts < suggestions.length; attempts += 1) {
+    index = (index + direction + suggestions.length) % suggestions.length;
+    if (suggestions[index]?.selectable !== false) return index;
+  }
+  return 0;
+}
+
+function compactTokens(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}m`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
+  return String(value);
+}
+
+async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, options?: {
+  sessionSuggestions?: () => TuiSessionSuggestion[];
+  thinkingSuggestions?: () => string[];
+  providerSuggestions?: (value: string) => CommandSuggestion[];
+  modelSuggestions?: (query: string) => CommandSuggestion[];
+}, draft?: InputDraft): Promise<string> {
   if (!input.isTTY || !output.isTTY || !input.setRawMode) {
     throw new Error("Raya's interactive TUI requires a TTY terminal.");
   }
 
-  let value = "";
+  let value = draft?.value ?? "";
   const label = (): string => value.startsWith("!") ? "[Term] > " : `[${mode}] > `;
-  let cursor = 0;
+  let cursor = Math.min(draft?.cursor ?? value.length, value.length);
   let selected = 0;
   let visible = 0;
   let killBuffer = "";
-  let exitWarning = false;
-  let exitTimer: NodeJS.Timeout | undefined;
+  let menuDismissed = false;
+  let settled = false;
+  let onData: (data: Buffer | string) => void;
 
   const render = (): void => {
-    const suggestions = commandSuggestions(value, cursor, sessionSuggestions, thinkingSuggestions);
+    const current = info();
+    const suggestions = menuDismissed ? [] : commandSuggestions(value, cursor, options?.sessionSuggestions, options?.thinkingSuggestions, options?.providerSuggestions, options?.modelSuggestions);
     if (selected >= suggestions.length) selected = Math.max(suggestions.length - 1, 0);
+    if (suggestions[selected]?.selectable === false) selected = selectableIndex(suggestions, selected - 1, 1);
     output.write("\r\x1b[J");
     output.write(color(label(), theme.blue) + value + "\n");
-    if (exitWarning) output.write(color("Press Ctrl+C again to exit.", theme.yellow) + "\n");
-    for (const [index, suggestion] of suggestions.entries()) {
+    const windowStart = Math.max(0, Math.min(selected - Math.floor(MAX_VISIBLE_SUGGESTIONS / 2), suggestions.length - MAX_VISIBLE_SUGGESTIONS));
+    const visibleSuggestions = suggestions.slice(windowStart, windowStart + MAX_VISIBLE_SUGGESTIONS);
+    let suggestionLines = 0;
+    if (windowStart > 0) {
+      output.write(`${color(`  ↑ ${windowStart} more`, theme.gray)}\n`);
+      suggestionLines += 1;
+    }
+    for (const [visibleIndex, suggestion] of visibleSuggestions.entries()) {
+      const index = windowStart + visibleIndex;
+      if (suggestion.selectable === false) {
+        output.write(`${color(suggestion.value, theme.cyan)}\n`);
+        suggestionLines += 1;
+        continue;
+      }
       const marker = index === selected ? color("›", theme.cyan) : " ";
       const line = `${marker} ${suggestion.value.padEnd(18)} ${color(suggestion.description, theme.gray)}`;
       output.write(`${line}\n`);
+      suggestionLines += 1;
     }
-    visible = suggestions.length;
-    output.write(`\x1b[${visible + (exitWarning ? 2 : 1)}A\r\x1b[${label().length + cursor}C`);
+    const hiddenBelow = suggestions.length - windowStart - visibleSuggestions.length;
+    if (hiddenBelow > 0) {
+      output.write(`${color(`  ↓ ${hiddenBelow} more`, theme.gray)}\n`);
+      suggestionLines += 1;
+    }
+    const detailLines = toolActivityDetailLines();
+    for (const line of detailLines) output.write(`${color(line, theme.gray)}\n`);
+    const used = compactTokens(current.contextTokens ?? 0);
+    const limit = compactTokens(current.contextWindow ?? 0);
+    output.write(color(`Context ${used}/${limit} · ${current.model} · ${current.directory} · Raya v${current.version}`, theme.gray) + "\n");
+    visible = suggestionLines + detailLines.length;
+    output.write(`\x1b[${visible + 2}A\r\x1b[${label().length + cursor}C`);
   };
 
   const finish = (resolve: (line: string) => void, line: string, echo = true): void => {
+    if (settled) return;
+    settled = true;
     input.setRawMode(false);
     input.off("keypress", onKeypress);
+    if (activeRawInputHandler === onData) activeRawInputHandler = undefined;
     input.pause();
-    if (exitTimer) clearTimeout(exitTimer);
+    activeNotificationHandler = undefined;
     output.write("\r\x1b[J");
     if (echo) output.write(color(label(), theme.blue) + line + "\n");
     resolve(line);
   };
 
   const insertCommand = (suggestion: CommandSuggestion, addSpace: boolean): void => {
-    const start = activeCommandStart(value, cursor) ?? ((value.startsWith("/sessions") || value.startsWith("/thinking") || value.startsWith("/security")) ? 0 : undefined);
+    const start = activeCommandStart(value, cursor) ?? ((value.startsWith("/sessions") || value.startsWith("/thinking") || value.startsWith("/security") || value.startsWith("/providers") || value.startsWith("/models")) ? 0 : undefined);
     if (start === undefined) return;
     const insertion = `${suggestion.value}${addSpace || suggestion.needsArgument ? " " : ""}`;
     value = value.slice(0, start) + insertion + value.slice(cursor);
     cursor = start + insertion.length;
     selected = 0;
+    menuDismissed = false;
   };
 
   let onKeypress: (text: string, key: { name?: string; ctrl?: boolean; meta?: boolean; sequence?: string }) => void;
   const result = new Promise<string>((resolve) => {
-    onKeypress = (text, key) => {
-      const suggestions = commandSuggestions(value, cursor, sessionSuggestions, thinkingSuggestions);
-      if (key.ctrl && key.name === "c") {
-        if (exitWarning) {
-          finish(resolve, "/exit");
-          return;
-        }
-        exitWarning = true;
-        exitTimer = setTimeout(() => {
-          exitWarning = false;
+    onData = (data) => {
+      const bytes = Buffer.isBuffer(data) ? data : Buffer.from(data);
+      if (bytes.length === 1 && bytes[0] === 0x03) {
+        finish(resolve, EXIT_SIGNAL, false);
+        return;
+      }
+      if (bytes.length === 1 && bytes[0] === 0x1b) {
+        const suggestions = menuDismissed ? [] : commandSuggestions(value, cursor, options?.sessionSuggestions, options?.thinkingSuggestions, options?.providerSuggestions, options?.modelSuggestions);
+        if (suggestions.length) {
+          menuDismissed = true;
+          selected = 0;
           render();
-        }, 1_000);
+        }
+      }
+    };
+    onKeypress = (text, key) => {
+      const previousValue = value;
+      const suggestions = menuDismissed ? [] : commandSuggestions(value, cursor, options?.sessionSuggestions, options?.thinkingSuggestions, options?.providerSuggestions, options?.modelSuggestions);
+      if (key.ctrl && key.name === "c") {
+        finish(resolve, EXIT_SIGNAL, false);
+        return;
+      }
+      if (key.name === "escape" && suggestions.length) {
+        menuDismissed = true;
+        selected = 0;
         render();
         return;
       }
-      exitWarning = false;
-      if (exitTimer) clearTimeout(exitTimer);
+      if (key.ctrl && key.name === "o") {
+        toggleToolActivityDetails();
+        render();
+        return;
+      }
       if (key.name === "up" && suggestions.length) {
-        selected = (selected - 1 + suggestions.length) % suggestions.length;
+        selected = selectableIndex(suggestions, selected, -1);
         render();
         return;
       }
       if (key.name === "down" && suggestions.length) {
-        selected = (selected + 1) % suggestions.length;
+        selected = selectableIndex(suggestions, selected, 1);
         render();
         return;
       }
-      if (key.name === "tab" && !value) {
-        finish(resolve, "__RAYA_TOGGLE_MODE__", false);
+      if (key.name === "tab") {
+        finish(resolve, `${MODE_TOGGLE_PREFIX}${JSON.stringify({ value, cursor })}`, false);
         return;
       }
       if (key.name === "return" || key.name === "enter") {
         if (suggestions.length) {
           const suggestion = suggestions[selected]!;
-          const commandAtStart = (activeCommandStart(value, cursor) === 0 || value.startsWith("/sessions") || value.startsWith("/thinking") || value.startsWith("/security")) && cursor === value.length;
+          if (suggestion.selectable === false) return;
+          const commandAtStart = (activeCommandStart(value, cursor) === 0 || value.startsWith("/sessions") || value.startsWith("/thinking") || value.startsWith("/security") || value.startsWith("/providers") || value.startsWith("/models")) && cursor === value.length;
+          if (commandAtStart && MENU_COMMANDS.has(suggestion.value)) {
+            finish(resolve, `${MENU_OPEN_PREFIX}${suggestion.value}`, false);
+            return;
+          }
           if (suggestion.needsArgument || !commandAtStart) {
             insertCommand(suggestion, !commandAtStart);
             render();
             return;
           }
           finish(resolve, suggestion.value);
+          return;
+        }
+        if (MENU_COMMANDS.has(value.trim())) {
+          finish(resolve, `${MENU_OPEN_PREFIX}${value.trim()}`, false);
           return;
         }
         finish(resolve, value);
@@ -310,11 +414,18 @@ async function readTuiLine(mode: "Plan" | "Build", sessionSuggestions?: () => Tu
         return;
       }
       selected = 0;
+      if (value !== previousValue) menuDismissed = false;
       render();
     };
+    activeRawInputHandler = onData;
     input.on("keypress", onKeypress);
     input.setRawMode(true);
     input.resume();
+    activeNotificationHandler = (message) => {
+      output.write("\r\x1b[J");
+      output.write(`${color(message, theme.yellow)}\n`);
+      render();
+    };
     render();
   });
 
@@ -334,31 +445,87 @@ async function runTerminalCommand(command: string): Promise<void> {
   });
 }
 
+async function runAgentPromptWithEscape(agent: Agent, message: string): Promise<boolean> {
+  let cancelled = false;
+  const cancel = (): void => {
+    if (cancelled) return;
+    cancelled = true;
+    agent.abort();
+    output.write(`\n${color("Cancelled.", theme.gray)}\n`);
+  };
+  const onData = (data: Buffer | string): void => {
+    const bytes = Buffer.isBuffer(data) ? data : Buffer.from(data);
+    if (bytes.length === 1 && bytes[0] === 0x1b) cancel();
+    if (bytes.length === 1 && bytes[0] === 0x03) process.kill(process.pid, "SIGINT");
+  };
+  const onKeypress = (_text: string, key: { name?: string; ctrl?: boolean }): void => {
+    if (key.name === "escape") cancel();
+    if (key.ctrl && key.name === "c") process.kill(process.pid, "SIGINT");
+  };
+
+  activeRawInputHandler = onData;
+  input.on("keypress", onKeypress);
+  input.setRawMode?.(true);
+  input.resume();
+  try {
+    await agent.prompt(message);
+    await agent.waitForIdle();
+  } catch (error) {
+    if (!cancelled) throw error;
+  } finally {
+    if (activeRawInputHandler === onData) activeRawInputHandler = undefined;
+    input.off("keypress", onKeypress);
+    input.setRawMode?.(false);
+    input.pause();
+  }
+  return cancelled;
+}
+
 export async function runInteractiveTui(inputAgent: Agent, info: TuiSessionInfo, options?: {
   onCommand?: (context: SlashCommandContext) => Promise<Agent | void> | Agent | void;
   onAfterPrompt?: (agent: Agent) => Promise<void> | void;
   sessionSuggestions?: () => TuiSessionSuggestion[];
   thinkingSuggestions?: () => string[];
+  providerSuggestions?: (value: string) => TuiCommandSuggestion[];
+  modelSuggestions?: (query: string) => TuiCommandSuggestion[];
+  statusInfo?: () => TuiSessionInfo;
   onToggleMode?: (agent: Agent) => Promise<{ agent?: Agent; mode: "Plan" | "Build" }> | { agent?: Agent; mode: "Plan" | "Build" };
 }): Promise<void> {
   let agent = inputAgent;
   let mode = info.mode as "Plan" | "Build";
+  let draft: InputDraft | undefined;
 
   output.write("\x1b[2J\x1b[H");
   renderHeader(info);
-  emitKeypressEvents(input);
+  const routeRawInput = (data: Buffer | string): void => activeRawInputHandler?.(data);
+  input.on("data", routeRawInput);
+  // Keep standalone Escape responsive instead of waiting for a possible Alt sequence.
+  emitKeypressEvents(input, { escapeCodeTimeout: 80 } as never);
 
   try {
     while (true) {
-      const prompt = await readTuiLine(mode, options?.sessionSuggestions, options?.thinkingSuggestions);
+      const prompt = await readTuiLine(mode, options?.statusInfo ?? (() => ({ ...info, mode })), options, draft);
+      draft = undefined;
       const message = prompt.trim();
 
-      if (prompt === "__RAYA_TOGGLE_MODE__") {
+      if (prompt === EXIT_SIGNAL) {
+        console.log("Bye bye");
+        break;
+      }
+
+      if (prompt.startsWith(MODE_TOGGLE_PREFIX)) {
+        draft = JSON.parse(prompt.slice(MODE_TOGGLE_PREFIX.length)) as InputDraft;
         const result = await options?.onToggleMode?.(agent);
         if (result) {
           agent = result.agent ?? agent;
           mode = result.mode;
         }
+        continue;
+      }
+
+      if (prompt.startsWith(MENU_OPEN_PREFIX)) {
+        const command = prompt.slice(MENU_OPEN_PREFIX.length);
+        draft = { value: `${command} `, cursor: command.length + 1 };
         continue;
       }
 
@@ -393,12 +560,18 @@ export async function runInteractiveTui(inputAgent: Agent, info: TuiSessionInfo,
         continue;
       }
 
-      await agent.prompt(message);
-      await agent.waitForIdle();
+      const messagesBeforePrompt = [...agent.state.messages];
+      const cancelled = await runAgentPromptWithEscape(agent, message);
+      if (cancelled) {
+        agent.state.messages = messagesBeforePrompt;
+        continue;
+      }
       await options?.onAfterPrompt?.(agent);
       console.log();
     }
   } finally {
+    input.off("data", routeRawInput);
+    activeRawInputHandler = undefined;
     if (input.isTTY && input.setRawMode) input.setRawMode(false);
     input.pause();
   }

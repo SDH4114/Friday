@@ -41,19 +41,20 @@ raya "explain this repository"  # one-shot prompt
 raya status
 raya models
 raya gateway --setup
+raya gateway --start
 raya gateway --restart
 ```
 
-The terminal UI is intentionally English and has a calm blue/gray palette. Model output streams live, tools and their results render inline, and Raya answers in the language of the user's request.
+The terminal UI is intentionally English and has a calm blue/gray palette. Every submitted prompt is echoed as `[Plan] > …` or `[Build] > …`, followed by one `Raya` heading and the streamed answer. Tool work uses persistent compact activity lines such as `Raya is reading …`, `Raya is editing …`, or `Raya is searching …`; press `Ctrl+O` at the prompt to expand or hide recent action details.
 
-The input prompt shows `[Plan]` or `[Build]`; press Tab on an empty input line to switch modes for the current session only. Plan exposes only file-reading tools and a restricted set of simple, read-only shell inspection commands. Build enables file and app changes, but every consequential action shows an **Accept / Refuse** approval picker (arrow keys plus Enter). Start a line with `!` to enter `[Term]` and run that shell command directly in your terminal—the command is never sent to Raya or saved in its conversation. Type `/` anywhere else in the input line to open a terminal dropdown of slash commands at the cursor. Use the Up/Down arrow keys to move through it and Enter to select an item. Selecting `/sessions` opens a second dropdown with `New session` and every saved session; selecting one clears the terminal and restores its conversation.
+The input prompt shows `[Plan]` or `[Build]`; press Tab at any time to switch modes for the current session only. Existing input and cursor position are preserved. Plan exposes only file-reading tools and a restricted set of simple, read-only shell inspection commands. Build enables file and app changes, but every consequential action shows an **Accept / Refuse** approval picker (arrow keys plus Enter). Start a line with `!` to enter `[Term]` and run that shell command directly in your terminal—the command is never sent to Raya or saved in its conversation. Type `/` anywhere else in the input line to open the main slash-command dropdown. A command-specific dropdown opens only after entering `/models`, `/providers`, `/sessions`, `/thinking`, or `/security` and pressing Enter. `/models` and `/providers` contain the complete built-in catalogs and scroll around the selected row. Use the Up/Down arrow keys to move, Enter to select, and Escape to close any open list. While Raya is generating or running tools, Escape aborts the current run and rolls its unfinished messages out of the session. Selecting `/sessions` opens a second dropdown with `New session` and every saved session; selecting one clears the terminal and restores its full conversation and tool activity. `Ctrl+C` exits immediately and prints `Bye bye`. A permanent footer below the input shows context usage, active model, working directory, and Raya version.
 
 Useful interactive commands:
 
 ```text
 /help
+/providers
 /models
-/model <model>
 /thinking
 /security
 /sessions
@@ -89,6 +90,8 @@ Structured session state is stored in `~/.raya/sessions.json`. Every save also c
 ~/.raya/memory/sessions/YYYY-MM-DD/<session-id>.md
 ```
 
+Every ordinary `raya` launch creates a new empty session. Previous sessions remain available from `/sessions`, including their prompts, answers, tool calls, model, mode, and security settings.
+
 `src/memory/skill.ts` is the intentionally small hook for a future memory skill to choose which durable facts to extract. The storage and history-reading foundation are complete, but automatic “what should be remembered” logic is **TODO for the user/project** in v1.
 
 Set `RAYA_HOME=/path` to move config, OAuth credentials, sessions, and memory. Default model and mode are configured with `raya config --model <model> --mode plan|build`. OAuth credentials and Telegram tokens are stored with owner-only permissions in `~/.raya/.env`, separate from non-sensitive configuration.
@@ -106,7 +109,7 @@ Blocked commands are rejected before Raya invokes the shell, in either mode. The
 
 ## Skills
 
-Raya automatically loads `SKILL.md` instructions from both `~/.raya/skills/<skill>/SKILL.md` and `<workspace>/.agents/skills/<skill>/SKILL.md`. Relevant skills are supplied to the agent at session start, so it can apply their workflow without a separate command. Skills are context instructions, never executable code by themselves.
+Raya automatically loads `SKILL.md` instructions from both `~/.raya/skills/<skill>/SKILL.md` and `<workspace>/.agents/skills/<skill>/SKILL.md`. Relevant skills are supplied to the agent at session start. Before applying one, the agent calls its built-in `use_skill` marker so the TUI can show `Raya is using skill …`. Skills are context instructions, never executable code by themselves.
 
 ## Subagents and pi packages
 
@@ -133,7 +136,7 @@ Security can be selected interactively with `/security`, or configured as the de
 
 Create a bot with [@BotFather](https://t.me/BotFather), copy its token, then enter it during Raya's first interactive run. A configured bot receives messages only while the Raya CLI process is running on your computer; it is not a hosted 24/7 service. Closing Raya or turning off the computer makes the bot unavailable—this is an intentional v1 limitation.
 
-Use `raya gateway --setup` to change the bot token or allowed chat ID. `raya gateway --restart` starts a fresh local Telegram gateway process, useful when the TUI is not running.
+Use `raya gateway --setup` to change the bot token or allowed chat ID. `raya gateway --start` starts the local Telegram gateway, useful when the TUI is not running. `raya gateway --restart` starts it again with a fresh Telegram connection.
 
 For a safer remote path, every dangerous tool action requested from Telegram—shell mutation, writing a file, or closing an application—waits for an inline **Approve** or **Deny** button in the Telegram chat. The action does not proceed on timeout or denial. Set an allowed chat ID during setup to restrict who can talk to the running session; otherwise anyone who knows the bot can send read-only requests, so an allowed chat ID is strongly recommended.
 
