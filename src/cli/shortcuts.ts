@@ -28,7 +28,7 @@ export async function openUrl(url: string): Promise<void> {
 
 export async function openApplication(application: string): Promise<void> {
   const target = application.trim();
-  if (!target) throw new Error("Укажите название приложения: raya open <имя приложения>");
+  if (!target) throw new Error("Specify an application name: raya open <application>");
 
   if (platform() === "darwin") {
     await execFileAsync("open", ["-a", target]);
@@ -51,8 +51,8 @@ export async function runGitShortcut(): Promise<void> {
 
   const rl = readline.createInterface({ input, output });
   try {
-    const message = (await rl.question("Название commit > ")).trim();
-    if (!message) throw new Error("Название commit не может быть пустым.");
+    const message = (await rl.question("Commit message > ")).trim();
+    if (!message) throw new Error("Commit message cannot be empty.");
     console.log("git commit -m \"…\"");
     await runGit(["commit", "-m", message]);
   } finally {
