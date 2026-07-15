@@ -12,6 +12,20 @@ type PendingApproval = { chatId: number; resolve: (approved: boolean) => void; t
 
 export type TelegramService = { stop(): Promise<void>; sendMessage(chatId: string | number, text: string): Promise<void> };
 
+export function splitTelegramMessage(text: string, maxChars = 4_000): string[] {
+  if (!text) return [""];
+  const chunks: string[] = [];
+  let remaining = text;
+  while (remaining.length > maxChars) {
+    const newline = remaining.lastIndexOf("\n", maxChars);
+    const cut = newline >= Math.floor(maxChars / 2) ? newline : maxChars;
+    chunks.push(remaining.slice(0, cut));
+    remaining = remaining.slice(cut).replace(/^\n/, "");
+  }
+  chunks.push(remaining);
+  return chunks;
+}
+
 export function startTelegramService(input: {
   token: string;
   allowedChatId?: string;
@@ -37,7 +51,11 @@ export function startTelegramService(input: {
   }
 
   async function send(chatId: number, text: string, keyboard?: unknown): Promise<void> {
-    await call("sendMessage", { chat_id: chatId, text: text.slice(0, 4000), ...(keyboard ? { reply_markup: keyboard } : {}) });
+    const chunks = splitTelegramMessage(text);
+    for (const [index, chunk] of chunks.entries()) {
+      const isLast = index === chunks.length - 1;
+      await call("sendMessage", { chat_id: chatId, text: chunk, ...(keyboard && isLast ? { reply_markup: keyboard } : {}) });
+    }
   }
 
   function startTyping(chatId: number): () => void {
@@ -60,7 +78,10 @@ export function startTelegramService(input: {
           reject(new Error("Remote action approval timed out."));
         }, 5 * 60_000);
         pending.set(id, { chatId, timer, resolve: (approved) => approved ? resolve() : reject(new Error("Remote action denied by user.")) });
-        void send(chatId, `Approval required\nAction: ${action}\nDetails: ${details}`, { inline_keyboard: [[{ text: "Approve", callback_data: `raya:approve:${id}` }, { text: "Deny", callback_data: `raya:deny:${id}` }]] }).catch(reject);
+        void send(chatId, `Approval required\nAction: ${action}\nDetails: ${details}`, { inline_keyboard: [[{ text: "Approve", callback_data: `raya:approve:${id}` }, { text: "Deny", callback_data: `raya:deny:${id}` }]] }).catch((error) => {
+          if (pending.delete(id)) clearTimeout(timer);
+          reject(error);
+        });
       })
     };
   }
@@ -125,5 +146,5 @@ export function startTelegramService(input: {
     }
   })();
 
-  return { async stop() { running = false; pollAbort?.abort(); retryWake?.(); await loop; }, async sendMessage(chatId,text){await send(Number(chatId),text);} };
+  return { async stop() { running = false; pollAbort?.abort(); retryWake?.(); for (const item of pending.values()) { clearTimeout(item.timer); item.resolve(false); } pending.clear(); await loop; }, async sendMessage(chatId,text){await send(Number(chatId),text);} };
 }

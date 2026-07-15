@@ -20,6 +20,8 @@ import { createDefaultTools } from "../tools/index.js";
 import { formatToolActivity, renderAgentEvent } from "../tui/render-events.js";
 import { notifyTui, requestTerminalApproval, runInteractiveTui } from "../tui/app.js";
 import { color, theme } from "../tui/theme.js";
+import { renderMarkdown } from "../tui/markdown.js";
+import { ensureNeovimConfig } from "../tui/neovim.js";
 import { startTelegramService } from "../telegram/service.js";
 import type { ToolExecutionPolicy } from "../types/tool.js";
 import { startScheduler } from "../scheduler/store.js";
@@ -30,6 +32,8 @@ import { spawn } from "node:child_process";
 import { RAYA_PLUGINS_DIR } from "../config/paths.js";
 import {
   createSession,
+  deleteSession,
+  findSession,
   getOrCreateActiveSession,
   listSessions,
   saveSession,
@@ -129,7 +133,7 @@ function lastAssistantText(agent: Agent): string {
 
 function renderRestoredSession(session: RayaSession): void {
   output.write("\x1b[2J\x1b[H");
-  console.log(color(`RAYA — restored session: ${session.name} (${session.id})`, theme.cyan));
+  console.log(color(`RAYA — restored session: ${session.name}`, theme.cyan));
   console.log(color(`${session.config.provider}/${session.config.model} · ${session.config.mode}`, theme.gray));
   console.log();
 
@@ -150,7 +154,7 @@ function renderRestoredSession(session: RayaSession): void {
       rayaPrinted = true;
     }
     for (const content of item.content ?? []) {
-      if (content.type === "text" && content.text?.trim()) console.log(`${content.text.trim()}\n`);
+      if (content.type === "text" && content.text?.trim()) console.log(`${renderMarkdown(content.text.trim())}\n`);
       if (content.type === "toolCall" && content.name) console.log(color(formatToolActivity(content.name, content.arguments), theme.gray));
     }
   }
@@ -297,6 +301,8 @@ program
     console.log(`model: ${config.model}`);
     console.log(`mode: ${config.mode}`);
     console.log(`security: ${config.securityMode}`);
+    console.log(`design: ${config.headerStyle}`);
+    console.log(`neovim_mode: ${config.neovim_mode}`);
     console.log(`logged_in: ${loggedIn}`);
   });
 
@@ -332,18 +338,25 @@ program
   .option("--mode <mode>", "Set default mode: plan or build.")
   .option("--thinking <level>", "Set thinking level: off, minimal, low, medium, high, xhigh.")
   .option("--security <mode>", "Set security mode: standard or full.")
+  .option("--design <style>", "Set startup design: small or large.")
+  .option("--neovim <boolean>", "Enable or disable Neovim input mode: true or false.")
   .action((rawOptions: unknown) => {
-    const options = commandOptions<{ provider?: string; model?: string; mode?: string; thinking?: string; security?: string }>(rawOptions);
+    const options = commandOptions<{ provider?: string; model?: string; mode?: string; thinking?: string; security?: string; design?: string; neovim?: string }>(rawOptions);
     const config = loadConfig();
+    if (options.neovim !== undefined && options.neovim !== "true" && options.neovim !== "false") throw new Error("--neovim must be true or false.");
+    if (options.design !== undefined && options.design !== "small" && options.design !== "large") throw new Error("--design must be small or large.");
     const next = {
       ...config,
       provider: options.provider ?? config.provider,
       model: options.model ?? config.model,
       mode: (options.mode ?? config.mode) as typeof config.mode,
-      thinkingLevel: (options.thinking ?? config.thinkingLevel) as typeof config.thinkingLevel
-      ,securityMode: (options.security ?? config.securityMode) as typeof config.securityMode
+      thinkingLevel: (options.thinking ?? config.thinkingLevel) as typeof config.thinkingLevel,
+      securityMode: (options.security ?? config.securityMode) as typeof config.securityMode,
+      headerStyle: (options.design ?? config.headerStyle) as typeof config.headerStyle,
+      neovim_mode: options.neovim === undefined ? config.neovim_mode : options.neovim === "true"
     };
     saveConfig(next);
+    if (next.neovim_mode) ensureNeovimConfig();
     const session = getOrCreateActiveSession(next);
     session.config = next;
     saveSession(session);
@@ -418,7 +431,8 @@ program
         "/models                       browse and choose models from all providers",
         "/thinking                      choose reasoning level",
         "/security                      choose Standard or Full access",
-        "/sessions                     create or open a session",
+        "/sessions                     create, open, or delete a session",
+        "/About                        what Raya is and what she can do",
         "/status                       show current config",
         "/clear                        clear current session messages",
         "/exit                         quit"
@@ -426,10 +440,34 @@ program
     };
 
     const handleCommand = async (activeAgent: Agent, command: string): Promise<Agent | void> => {
-      const [name, ...args] = command.slice(1).split(/\s+/).filter(Boolean);
+      const [rawName, ...args] = command.slice(1).split(/\s+/).filter(Boolean);
+      const name = rawName?.toLowerCase();
 
       if (!name || name === "help") {
         printHelp();
+        return;
+      }
+
+      if (name === "about") {
+        console.log(renderMarkdown([
+          "# Raya A.P.P.L.E.",
+          "",
+          "**Adaptive Personal Processing and Logic Engine**",
+          "",
+          "Raya is a personal AI operating system and coding agent that works with you directly from the terminal. She is designed to understand a goal, inspect the real environment, plan the work, carry it out, and preserve useful context for later.",
+          "",
+          "Raya can:",
+          "- read, create, and edit project files;",
+          "- run terminal commands and work with applications;",
+          "- search the web when current information is needed;",
+          "- follow personal ~/.raya instructions or the nearest workspace AGENTS.md and SOUL.md;",
+          "- remember durable preferences and project knowledge in USER.md and MEMORY.md;",
+          "- search and read previous Raya sessions;",
+          "- use skills, subagents, schedules, and Telegram integration;",
+          "- work safely in Plan mode or make changes in Build mode.",
+          "",
+          "The goal of Raya is simple: turn a conversation into completed, verifiable work while becoming more useful to you over time."
+        ].join("\n")));
         return;
       }
 
@@ -521,7 +559,31 @@ program
           renderRestoredSession(next);
           return nextAgent;
         }
-        console.log("Use /sessions and select New session or an existing session.");
+        if (action === "delete") {
+          const target = args[1];
+          if (!target) throw new Error("Choose a session to delete from the /sessions menu.");
+          const selected = findSession(target);
+          if (!selected) throw new Error(`Session not found: ${target}`);
+          try {
+            await requestTerminalApproval("Delete session", `${selected.name} (${selected.id})`);
+          } catch (error) {
+            if (error instanceof Error && error.message === "Action refused by user.") {
+              console.log(color("Session deletion cancelled.", theme.gray));
+              return;
+            }
+            throw error;
+          }
+          persist(activeAgent);
+          const deleted = deleteSession(target);
+          console.log(color(`Deleted session: ${deleted.name}`, theme.green));
+          if (deleted.id === session.id) {
+            const next = createSession(config);
+            console.log(color("Started a new empty session.", theme.gray));
+            return rebuildAgent(next);
+          }
+          return;
+        }
+        console.log("Use /sessions to create, open, or delete a session.");
         return;
       }
 
@@ -530,7 +592,9 @@ program
         console.log(`Model     : ${config.model}`);
         console.log(`Mode      : ${config.mode === "plan" ? "Plan" : "Build"}`);
         console.log(`Security  : ${config.securityMode}`);
-        console.log(`Session   : ${session.id} ${session.name}`);
+        console.log(`Design    : ${config.headerStyle}`);
+        console.log(`Neovim mode  : ${config.neovim_mode ? "Enabled" : "Disabled"}`);
+        console.log(`Session   : ${session.name}`);
         console.log(`Config    : ${RAYA_CONFIG_PATH}`);
         console.log("Credentials: stored securely");
         return;
@@ -591,7 +655,8 @@ program
         mode: config.mode === "plan" ? "Plan" : "Build",
         directory: formatDirectory(process.cwd()),
         memory: "Enabled",
-        session: `${session.id} ${session.name}`,
+        headerStyle: config.headerStyle,
+        session: session.name,
         version: VERSION,
         contextTokens: 0,
         contextWindow: model.contextWindow
@@ -660,12 +725,15 @@ program
             mode: config.mode === "plan" ? "Plan" : "Build",
             directory: formatDirectory(process.cwd()),
             memory: "Enabled",
-            session: `${session.id} ${session.name}`,
+            headerStyle: config.headerStyle,
+            session: session.name,
             version: VERSION,
             contextTokens,
             contextWindow: model.contextWindow
           };
-        }
+        },
+        neovimMode: config.neovim_mode,
+        neovimConfig: config.neovim_mode ? ensureNeovimConfig() : undefined
       });
     } finally {
       process.off("SIGINT", exitImmediately);

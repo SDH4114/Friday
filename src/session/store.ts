@@ -1,8 +1,8 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { ensureRayaHome, RAYA_MEMORY_DIR, RAYA_SESSIONS_PATH } from "../config/paths.js";
-import type { RayaConfig } from "../config/config.js";
+import { normalizeConfig, type RayaConfig } from "../config/config.js";
 import { memorySkillHook } from "../memory/skill.js";
 
 export type RayaSession = {
@@ -12,6 +12,7 @@ export type RayaSession = {
   updatedAt: number;
   config: RayaConfig;
   messages: AgentMessage[];
+  autoNamed?: boolean;
 };
 
 type SessionFile = {
@@ -25,11 +26,9 @@ function readSessionFile(): SessionFile {
     return { sessions: [] };
   }
   const file = JSON.parse(readFileSync(RAYA_SESSIONS_PATH, "utf8")) as SessionFile;
-  // Migrate session snapshots written before the Edit mode was renamed Build.
   for (const session of file.sessions) {
-    if ((session.config as { mode?: string }).mode === "edit") {
-      session.config = { ...session.config, mode: "build" };
-    }
+    session.config = normalizeConfig(session.config);
+    if (session.autoNamed === undefined) session.autoNamed = true;
   }
   return file;
 }
@@ -60,30 +59,59 @@ export function getOrCreateActiveSession(config: RayaConfig): RayaSession {
     return active;
   }
 
-  const now = Date.now();
-  const session: RayaSession = {
-    id: randomUUID().slice(0, 8),
-    name: "default",
-    createdAt: now,
-    updatedAt: now,
-    config,
-    messages: []
-  };
-  file.sessions.unshift(session);
-  file.activeSessionId = session.id;
-  writeSessionFile(file);
-  persistReadableTranscript(session);
-  return session;
+  return createSession(config);
 }
 
 export function listSessions(): RayaSession[] {
   return readSessionFile().sessions.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
+export function findSession(idOrName: string): RayaSession | undefined {
+  return readSessionFile().sessions.find((item) => item.id === idOrName || item.name === idOrName);
+}
+
+function deleteReadableTranscripts(sessionId: string): void {
+  const root = `${RAYA_MEMORY_DIR}/sessions`;
+  if (!existsSync(root)) return;
+  for (const day of readdirSync(root, { withFileTypes: true })) {
+    if (!day.isDirectory()) continue;
+    const transcript = `${root}/${day.name}/${sessionId}.md`;
+    if (existsSync(transcript)) unlinkSync(transcript);
+  }
+}
+
+export function deleteSession(idOrName: string): RayaSession {
+  const file = readSessionFile();
+  const index = file.sessions.findIndex((item) => item.id === idOrName || item.name === idOrName);
+  if (index < 0) throw new Error(`Session not found: ${idOrName}`);
+  const [deleted] = file.sessions.splice(index, 1);
+  if (!deleted) throw new Error(`Session not found: ${idOrName}`);
+  if (file.activeSessionId === deleted.id) file.activeSessionId = file.sessions[0]?.id;
+  writeSessionFile(file);
+  deleteReadableTranscripts(deleted.id);
+  return deleted;
+}
+
 export function saveSession(session: RayaSession): void {
   const file = readSessionFile();
-  const next = { ...session, updatedAt: Date.now() };
   const index = file.sessions.findIndex((item) => item.id === session.id);
+  if (!session.messages.length) {
+    if (index >= 0) {
+      file.sessions.splice(index, 1);
+      if (file.activeSessionId === session.id) file.activeSessionId = file.sessions[0]?.id;
+      writeSessionFile(file);
+    }
+    return;
+  }
+  const next = {
+    ...session,
+    name: session.autoNamed ? session.name : sessionNameFromFirstPrompt(session),
+    autoNamed: true,
+    updatedAt: Date.now()
+  };
+  session.name = next.name;
+  session.autoNamed = true;
+  session.updatedAt = next.updatedAt;
   if (index >= 0) {
     file.sessions[index] = next;
   } else {
@@ -98,18 +126,27 @@ export function createSession(config: RayaConfig, name?: string): RayaSession {
   const now = Date.now();
   const session: RayaSession = {
     id: randomUUID().slice(0, 8),
-    name: name?.trim() || `session-${new Date(now).toISOString().slice(0, 10)}`,
+    name: name?.trim() || "New session",
     createdAt: now,
     updatedAt: now,
     config,
-    messages: []
+    messages: [],
+    autoNamed: Boolean(name?.trim())
   };
-  const file = readSessionFile();
-  file.sessions.unshift(session);
-  file.activeSessionId = session.id;
-  writeSessionFile(file);
-  persistReadableTranscript(session);
   return session;
+}
+
+function sessionNameFromFirstPrompt(session: RayaSession): string {
+  const firstUser = session.messages.find((message) => message.role === "user") as { content?: Array<{ type?: string; text?: string }> } | undefined;
+  const text = firstUser?.content?.filter((item) => item.type === "text").map((item) => item.text ?? "").join(" ") ?? "";
+  const clean = text
+    .replace(/[`*_>#\[\](){}]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!clean) return "Raya conversation";
+  const words = clean.split(" ").slice(0, 8).join(" ");
+  const shortened = words.length > 56 ? `${words.slice(0, 53).trimEnd()}…` : words;
+  return shortened.charAt(0).toUpperCase() + shortened.slice(1);
 }
 
 export function switchSession(idOrName: string): RayaSession {

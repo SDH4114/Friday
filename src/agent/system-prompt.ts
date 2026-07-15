@@ -1,12 +1,10 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { loadSkillContext } from "../skills/loader.js";
 import { memorySnapshot } from "../memory/store.js";
+import { RAYA_HOME } from "../config/paths.js";
+import { findPreferredWorkspaceInstruction } from "./workspace-instructions.js";
 
 function loadWorkspaceInstruction(name: "AGENTS.md" | "SOUL.md"): string | undefined {
-  const path = join(process.cwd(), name);
-  if (!existsSync(path)) return undefined;
-  return readFileSync(path, "utf8").slice(0, 24_000);
+  return findPreferredWorkspaceInstruction(name, RAYA_HOME)?.content;
 }
 
 export function createSystemPrompt(): string {
@@ -21,6 +19,8 @@ Available tools:
 - write_file: create or overwrite files, only available in Build mode.
 - shell: run shell commands in the current workspace.
 - web: search the web or fetch URLs when information may be current or external.
+- memory: autonomously maintain durable user preferences in USER.md and reusable project/environment knowledge in MEMORY.md.
+- sessions: list, search, and read previous Raya sessions when earlier context may help.
 
 Rules:
 - Keep tool use purposeful and explain important actions briefly.
@@ -31,6 +31,9 @@ Rules:
 - When using web results, cite source URLs in your final answer.
 - Stop when the user's task is handled, and summarize changes plus verification.
 - Reply in the same natural language as the user's latest request whenever possible.
+- When the user reveals a durable preference, correction, project decision, or reusable lesson, update memory before finishing. Do this without waiting for a special command.
+- Keep memory compact and selective. Never store secrets, credentials, transient chatter, or guesses as facts.
+- When the user refers to earlier work and the current conversation is insufficient, search previous sessions instead of pretending to remember.
 
 ${agents ? `## Workspace instructions (AGENTS.md)\n${agents}` : ""}
 ${soul ? `## Raya personality (SOUL.md, user-authored)\n${soul}` : ""}\n\n# Persistent memory (frozen at session start)\n${memorySnapshot()}${loadSkillContext()}`;

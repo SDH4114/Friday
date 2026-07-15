@@ -41,7 +41,7 @@ function decodeDuckDuckGoUrl(raw: string): string {
   try {
     const parsed = new URL(raw, "https://duckduckgo.com");
     const uddg = parsed.searchParams.get("uddg");
-    return uddg ? decodeURIComponent(uddg) : raw;
+    return uddg ?? raw;
   } catch {
     return raw;
   }
@@ -125,16 +125,19 @@ export function createWebTool(config: RayaConfig): RayaTool<typeof WebParameters
       "Search the web with a query or fetch a URL. Returns short text excerpts and source URLs.",
     parameters: WebParameters,
     async execute(_toolCallId, params, signal) {
-      if (!params.query && !params.url) {
-        throw new Error("Provide either query or url.");
+      if (Boolean(params.query) === Boolean(params.url)) {
+        throw new Error("Provide exactly one of query or url.");
       }
 
       if (params.url) {
-        const html = await fetchText(params.url, config.webTimeoutMs, signal);
+        const url = new URL(params.url);
+        if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("Only http and https URLs are supported.");
+        if (url.username || url.password) throw new Error("URLs containing credentials are not supported.");
+        const html = await fetchText(url.toString(), config.webTimeoutMs, signal);
         const content = stripHtml(html).slice(0, config.webMaxChars);
         const details: WebDetails = {
           mode: "fetch",
-          results: [{ url: params.url, content }]
+          results: [{ url: url.toString(), content }]
         };
 
         return {

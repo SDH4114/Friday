@@ -1,8 +1,8 @@
 import type { RayaSession } from "../session/store.js";
 
 /**
- * Future memory skills can inspect a completed session and selectively promote
- * durable facts. Raya deliberately ships no automatic extraction policy in v1.
+ * Optional memory extensions can inspect a completed session and perform extra
+ * consolidation beyond Raya's built-in model-driven memory tool usage.
  */
 export interface MemorySkill {
   id: string;

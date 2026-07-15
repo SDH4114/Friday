@@ -1,5 +1,5 @@
 import { Type } from "@earendil-works/pi-ai";
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { mkdirSync } from "node:fs";
 import type { RayaTool, ToolExecutionPolicy } from "../types/tool.js";
@@ -18,11 +18,27 @@ const ListFilesParameters = Type.Object({
   maxEntries: Type.Optional(Type.Number({ description: "Maximum number of entries. Defaults to 200." }))
 });
 
-function workspacePath(path: string): string {
-  const root = process.cwd();
-  const resolved = resolve(root, path);
-  if (resolved !== root && !resolved.startsWith(`${root}/`)) {
+function isInside(root: string, path: string): boolean {
+  return path === root || path.startsWith(`${root}/`);
+}
+
+function workspacePath(path: string, allowMissing = false): string {
+  const lexicalRoot = resolve(process.cwd());
+  const realRoot = realpathSync(lexicalRoot);
+  const resolved = resolve(lexicalRoot, path);
+  if (!isInside(lexicalRoot, resolved)) {
     throw new Error(`Path escapes workspace: ${path}`);
+  }
+
+  let existing = resolved;
+  while (!existsSync(existing)) {
+    if (!allowMissing) throw new Error(`Path does not exist: ${path}`);
+    const parent = dirname(existing);
+    if (parent === existing) throw new Error(`Path escapes workspace: ${path}`);
+    existing = parent;
+  }
+  if (!isInside(realRoot, realpathSync(existing))) {
+    throw new Error(`Path escapes workspace through a symbolic link: ${path}`);
   }
   return resolved;
 }
@@ -57,7 +73,7 @@ export function createWriteFileTool(policy: ToolExecutionPolicy = {}): RayaTool<
     executionMode: "sequential",
     async execute(_toolCallId, params) {
       await policy.confirmDangerousAction?.("write file", params.path);
-      const path = workspacePath(params.path);
+      const path = workspacePath(params.path, true);
       mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, params.content, "utf8");
       return {
@@ -76,17 +92,18 @@ export function createListFilesTool(): RayaTool<typeof ListFilesParameters, { en
     parameters: ListFilesParameters,
     async execute(_toolCallId, params) {
       const start = workspacePath(params.path ?? ".");
-      const maxEntries = Math.min(params.maxEntries ?? 200, 1000);
-      if (!existsSync(start)) {
-        throw new Error(`Path does not exist: ${params.path ?? "."}`);
-      }
+      const maxEntries = Math.max(1, Math.min(Math.floor(params.maxEntries ?? 200), 1000));
 
       const entries: string[] = [];
       const visit = (path: string): void => {
         if (entries.length >= maxEntries) {
           return;
         }
-        const stat = statSync(path);
+        const stat = lstatSync(path);
+        if (stat.isSymbolicLink()) {
+          entries.push(`${displayPath(path)} -> [symbolic link]`);
+          return;
+        }
         if (stat.isDirectory()) {
           for (const entry of readdirSync(path)) {
             if (entry === "node_modules" || entry === ".git" || entry === "dist") {

@@ -14,10 +14,11 @@
   ],
   "scripts": {
     "clean": "rm -rf dist",
-    "build": "tsc && chmod +x dist/cli/index.js",
+    "build": "npm run clean && tsc && chmod +x dist/cli/index.js",
     "dev": "tsx src/cli/index.ts",
     "prepack": "npm run build",
     "start": "node dist/cli/index.js",
+    "test": "node --import tsx --test tests/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [

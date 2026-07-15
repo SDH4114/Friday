@@ -45,9 +45,13 @@ raya gateway --start
 raya gateway --restart
 ```
 
-The terminal UI is intentionally English and has a calm blue/gray palette. Every submitted prompt is echoed as `[Plan] > …` or `[Build] > …`, followed by one `Raya` heading and the streamed answer. Tool work uses persistent compact activity lines such as `Raya is reading …`, `Raya is editing …`, or `Raya is searching …`; press `Ctrl+O` at the prompt to expand or hide recent action details.
+The terminal UI is intentionally English and has a calm blue/gray palette. Every submitted prompt is echoed as `[Plan] > …` or `[Build] > …`, followed by one `Raya` heading and a readable Markdown-rendered answer. Responses support headings, bold, italic, strikethrough, links, inline code, fenced code blocks, lists, task lists, blockquotes, tables, horizontal rules, and semantic terminal colors. For explicit color emphasis, the model may use `{cyan}text{/cyan}` (also `red`, `green`, `yellow`, `blue`, `magenta`, `gray`, and `white`). Tool work is shown immediately as readable expanded blocks such as `Raya is reading …`, `Raya is editing …`, or `Raya is searching …`, including the action input and result. Concurrent actions are separated by one blank line.
 
-The input prompt shows `[Plan]` or `[Build]`; press Tab at any time to switch modes for the current session only. Existing input and cursor position are preserved. Plan exposes only file-reading tools and a restricted set of simple, read-only shell inspection commands. Build enables file and app changes, but every consequential action shows an **Accept / Refuse** approval picker (arrow keys plus Enter). Start a line with `!` to enter `[Term]` and run that shell command directly in your terminal—the command is never sent to Raya or saved in its conversation. Type `/` anywhere else in the input line to open the main slash-command dropdown. A command-specific dropdown opens only after entering `/models`, `/providers`, `/sessions`, `/thinking`, or `/security` and pressing Enter. `/models` and `/providers` contain the complete built-in catalogs and scroll around the selected row. Use the Up/Down arrow keys to move, Enter to select, and Escape to close any open list. While Raya is generating or running tools, Escape aborts the current run and rolls its unfinished messages out of the session. Selecting `/sessions` opens a second dropdown with `New session` and every saved session; selecting one clears the terminal and restores its full conversation and tool activity. `Ctrl+C` exits immediately and prints `Bye bye`. A permanent footer below the input shows context usage, active model, working directory, and Raya version.
+The input prompt shows `[Plan]` or `[Build]`; press Tab at any time to switch modes for the current session only. Existing input and cursor position are preserved. Plan exposes only file-reading tools and a restricted set of simple, read-only shell inspection commands. Build enables file and app changes, but every consequential action shows an **Accept / Refuse** approval picker (arrow keys plus Enter). Start a line with `!` to enter `[Term]` and run that shell command directly in your terminal—the command is never sent to Raya or saved in its conversation. Type `/` anywhere else in the input line to open the main slash-command dropdown. A command-specific dropdown opens only after entering `/models`, `/providers`, `/sessions`, `/thinking`, or `/security` and pressing Enter. `/models` and `/providers` contain the complete built-in catalogs and scroll around the selected row. Use the Up/Down arrow keys to move, Enter to select, and Escape to close any open list. While Raya is generating or running tools, Escape aborts the current run and rolls its unfinished messages out of the session. In `/sessions`, Enter opens the selected session; pressing `dd` on it requests deletion and then shows an **Accept / Refuse** confirmation. `Ctrl+C` exits immediately and prints `Bye bye`. A permanent footer below the input shows context usage, active model, working directory, and Raya version.
+
+The startup header defaults to the compact `Raya A.P.P.L.E.` design. Use `raya config --design large` for the large dotted ASCII design, or `raya config --design small` to switch back.
+
+Neovim input is optional. Enable it with `raya config --neovim true` and disable it with `raya config --neovim false`. When enabled, the single-line prompt starts in `NORMAL` mode and displays the current `NORMAL`, `INSERT`, `VISUAL`, or `REPLACE` state. It supports Unicode/grapheme-safe motions and counts, `i/a/I/A/gI/o/O`, `h/l/w/W/b/B/e/E/0/^/$/gg/G`, `f/F/t/T/;/,`, `d/c/y` operators, combined operator counts, `dd/cc/yy`, word and delimiter text objects such as `diw`, `daw`, `ci"`, and `da(`, `x/X/D/C/Y/s/S`, visual and visual-line selection, `p/P`, `r/R`, `u`, `Ctrl+R`, `.`, `~`, and prompt history through `j/k`. Insert sessions are grouped into one undo operation. `/` enters Insert mode and opens Raya's command palette. The complete default key map is created at `~/.raya/neovim.json` when Neovim mode is first enabled and is automatically extended with new defaults without replacing custom bindings. Existing `vim_mode` and `~/.raya/vim.json` settings are imported automatically on first use.
 
 Useful interactive commands:
 
@@ -58,6 +62,7 @@ Useful interactive commands:
 /thinking
 /security
 /sessions
+/About
 /clear
 /exit
 ```
@@ -75,7 +80,7 @@ Plan mode blocks common mutating shell commands; Build mode permits normal local
 
 ## AGENTS.md and SOUL.md
 
-On every agent creation Raya reads these optional files from the current working directory and appends them to the system context:
+On every agent creation Raya first checks `~/.raya/AGENTS.md` and `~/.raya/SOUL.md`. For each file that is absent there, Raya walks upward from the current working directory and loads the nearest available copy:
 
 - `AGENTS.md` contains project instructions.
 - `SOUL.md` is your user-authored Raya personality: tone, style, and character.
@@ -90,9 +95,9 @@ Structured session state is stored in `~/.raya/sessions.json`. Every save also c
 ~/.raya/memory/sessions/YYYY-MM-DD/<session-id>.md
 ```
 
-Every ordinary `raya` launch creates a new empty session. Previous sessions remain available from `/sessions`, including their prompts, answers, tool calls, model, mode, and security settings.
+Every ordinary `raya` launch starts with a transient empty session. It is not written to disk until the first message is sent. At that point Raya derives a readable session name from the first prompt instead of using a random identifier. Previous non-empty sessions remain available from `/sessions`, including their prompts, answers, tool calls, model, mode, and security settings.
 
-`src/memory/skill.ts` is the intentionally small hook for a future memory skill to choose which durable facts to extract. The storage and history-reading foundation are complete, but automatic “what should be remembered” logic is **TODO for the user/project** in v1.
+Raya can autonomously write compact durable facts to `USER.md` and `MEMORY.md` through her memory tool. `src/memory/skill.ts` remains an extension hook for optional post-session consolidation beyond the built-in model-driven behavior.
 
 Set `RAYA_HOME=/path` to move config, OAuth credentials, sessions, and memory. Default model and mode are configured with `raya config --model <model> --mode plan|build`. OAuth credentials and Telegram tokens are stored with owner-only permissions in `~/.raya/.env`, separate from non-sensitive configuration.
 
@@ -111,6 +116,8 @@ Blocked commands are rejected before Raya invokes the shell, in either mode. The
 
 Raya automatically loads `SKILL.md` instructions from both `~/.raya/skills/<skill>/SKILL.md` and `<workspace>/.agents/skills/<skill>/SKILL.md`. Relevant skills are supplied to the agent at session start. Before applying one, the agent calls its built-in `use_skill` marker so the TUI can show `Raya is using skill …`. Skills are context instructions, never executable code by themselves.
 
+At startup Raya prefers `~/.raya/AGENTS.md`; if it is absent, she walks upward from the current directory and loads the nearest `AGENTS.md`. `SOUL.md` follows the same independent fallback algorithm.
+
 ## Subagents and pi packages
 
 Raya exposes a `subagent` tool. The model can automatically delegate a bounded investigation or implementation task to an isolated agent with its own context and the current Plan/Build restrictions.
@@ -126,7 +133,7 @@ Skills shipped inside installed pi packages are loaded on the next session. Nati
 
 ## Persistent memory and scheduling
 
-Raya injects bounded frozen snapshots from `~/.raya/USER.md` (1,375 chars) and `~/.raya/MEMORY.md` (2,200 chars). The `memory` tool can add, replace, and remove compact entries; writes are persisted immediately and appear in the next session's prompt.
+Raya injects bounded frozen snapshots from `~/.raya/USER.md` (1,375 chars) and `~/.raya/MEMORY.md` (2,200 chars). Raya autonomously saves durable preferences, corrections, project decisions, and reusable lessons through the `memory` tool; writes are persisted immediately and appear in the next session's prompt. She can also list, search, and read saved sessions when earlier context is relevant.
 
 The `schedule` tool stores one-time and daily tasks in `~/.raya/scheduled.json`. Due tasks are delivered while the Raya TUI or Telegram gateway is running; restarting Raya reloads pending tasks from disk.
 
@@ -163,7 +170,7 @@ For a safer remote path, every dangerous tool action requested from Telegram—s
 - Additional provider adapters and provider-specific setup improvements.
 - Real sandboxing and configurable local approvals.
 - Browser automation.
-- A complete memory-skill policy and plugin loader.
+- Optional post-session memory consolidation and a complete plugin loader.
 - Windows support.
 
 ## Publishing

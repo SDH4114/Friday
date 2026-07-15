@@ -15,6 +15,7 @@ type ShellDetails = {
   stdout: string;
   stderr: string;
   timedOut: boolean;
+  aborted: boolean;
 };
 
 function truncate(value: string, maxChars: number): string {
@@ -23,10 +24,6 @@ function truncate(value: string, maxChars: number): string {
   }
 
   return `${value.slice(0, maxChars)}\n\n[truncated ${value.length - maxChars} chars]`;
-}
-
-function isDangerous(command: string): boolean {
-  return /\b(rm|mv|cp|touch|mkdir|rmdir|chmod|chown|kill|pkill|git\s+(commit|push|reset|checkout|clean|merge|rebase)|npm\s+(install|uninstall|update|link)|pnpm\s+(install|add|remove)|yarn\s+(add|remove|install))\b/.test(command);
 }
 
 function assertPlanSafe(command: string): void {
@@ -41,6 +38,15 @@ function assertPlanSafe(command: string): void {
   }
   if (program === "git" && !["status", "diff", "log", "show", "branch", "remote"].includes(args[0] ?? "")) {
     throw new Error("Plan mode only permits read-only git commands.");
+  }
+}
+
+export function requiresShellApproval(command: string): boolean {
+  try {
+    assertPlanSafe(command);
+    return false;
+  } catch {
+    return true;
   }
 }
 
@@ -68,8 +74,8 @@ export function createShellTool(config: RayaConfig, policy: ToolExecutionPolicy 
     async execute(_toolCallId, params, signal) {
       assertNotBlocked(params.command, config.blockedCommands);
       assertAllowedInMode(params.command, config.mode);
-      if (isDangerous(params.command)) await policy.confirmDangerousAction?.("run shell command", params.command);
-      const result = await new Promise<ShellDetails>((resolve) => {
+      if (requiresShellApproval(params.command)) await policy.confirmDangerousAction?.("run shell command", params.command);
+      const result = await new Promise<ShellDetails>((resolve, reject) => {
         const child = spawn(params.command, {
           cwd: process.cwd(),
           shell: process.env.SHELL ?? "/bin/sh",
@@ -79,18 +85,30 @@ export function createShellTool(config: RayaConfig, policy: ToolExecutionPolicy 
         let stdout = "";
         let stderr = "";
         let timedOut = false;
+        let aborted = false;
+        let terminating = false;
+        let forceKill: NodeJS.Timeout | undefined;
+
+        const terminate = (): void => {
+          if (terminating) return;
+          terminating = true;
+          child.kill("SIGTERM");
+          forceKill = setTimeout(() => child.kill("SIGKILL"), 2_000);
+          forceKill.unref();
+        };
 
         const timeout = setTimeout(() => {
           timedOut = true;
-          child.kill("SIGTERM");
+          terminate();
         }, config.shellTimeoutMs);
 
         const abort = () => {
-          timedOut = true;
-          child.kill("SIGTERM");
+          aborted = true;
+          terminate();
         };
 
-        signal?.addEventListener("abort", abort, { once: true });
+        if (signal?.aborted) abort();
+        else signal?.addEventListener("abort", abort, { once: true });
 
         child.stdout.on("data", (chunk: Buffer) => {
           stdout += chunk.toString("utf8");
@@ -100,15 +118,24 @@ export function createShellTool(config: RayaConfig, policy: ToolExecutionPolicy 
           stderr += chunk.toString("utf8");
         });
 
+        child.once("error", (error) => {
+          clearTimeout(timeout);
+          if (forceKill) clearTimeout(forceKill);
+          signal?.removeEventListener("abort", abort);
+          reject(error);
+        });
+
         child.on("close", (exitCode) => {
           clearTimeout(timeout);
+          if (forceKill) clearTimeout(forceKill);
           signal?.removeEventListener("abort", abort);
           resolve({
             command: params.command,
             exitCode,
             stdout: truncate(stdout, 20_000),
             stderr: truncate(stderr, 20_000),
-            timedOut
+            timedOut,
+            aborted
           });
         });
       });
@@ -117,6 +144,7 @@ export function createShellTool(config: RayaConfig, policy: ToolExecutionPolicy 
         `command: ${result.command}`,
         `exit_code: ${result.exitCode}`,
         result.timedOut ? "timed_out: true" : undefined,
+        result.aborted ? "aborted: true" : undefined,
         result.stdout ? `stdout:\n${result.stdout}` : undefined,
         result.stderr ? `stderr:\n${result.stderr}` : undefined
       ]

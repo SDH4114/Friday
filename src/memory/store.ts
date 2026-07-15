@@ -14,9 +14,11 @@ export function memorySnapshot(): string {
 }
 export function mutateMemory(action: "add"|"replace"|"remove", target: MemoryTarget, content?: string, oldText?: string): string {
   ensureRayaHome(); let current = readMemory(target); const entries = current ? current.split(/\n§\n/) : [];
+  if ((action === "replace" || action === "remove") && !oldText?.trim()) throw new Error("old_text is required");
+  if ((action === "add" || action === "replace") && !content?.trim()) throw new Error("content is required");
   if (content && /ignore previous|system prompt|api[_ -]?key|ssh-rsa/i.test(content)) throw new Error("Memory entry rejected by security scan.");
-  if (action === "add") { if (!content) throw new Error("content is required"); if (!entries.includes(content)) entries.push(content); }
-  else { const matches = entries.map((e,i)=>e.includes(oldText ?? "")?i:-1).filter(i=>i>=0); if (matches.length !== 1) throw new Error(`old_text must match exactly one entry; matched ${matches.length}`); action === "remove" ? entries.splice(matches[0]!,1) : entries.splice(matches[0]!,1,content ?? ""); }
+  if (action === "add") { if (!entries.includes(content!)) entries.push(content!); }
+  else { const matches = entries.map((e,i)=>e.includes(oldText!)?i:-1).filter(i=>i>=0); if (matches.length !== 1) throw new Error(`old_text must match exactly one entry; matched ${matches.length}`); action === "remove" ? entries.splice(matches[0]!,1) : entries.splice(matches[0]!,1,content!); }
   current = entries.filter(Boolean).join("\n§\n"); if (current.length > LIMITS[target]) throw new Error(`Memory limit exceeded: ${current.length}/${LIMITS[target]}`);
   writeFileSync(pathFor(target), `${current}\n`, { mode: 0o600 }); return `${target}: ${current.length}/${LIMITS[target]}`;
 }

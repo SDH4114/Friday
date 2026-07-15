@@ -1,9 +1,10 @@
 import type { Agent } from "@earendil-works/pi-agent-core";
 import { emitKeypressEvents } from "node:readline";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import { spawn } from "node:child_process";
 import { stdin as input, stdout as output } from "node:process";
 import { color, theme } from "./theme.js";
-import { toggleToolActivityDetails, toolActivityDetailLines } from "./tool-activity.js";
+import { createNeovimState, ensureNeovimConfig, handleNeovimKey, type NeovimConfig, type NeovimState } from "./neovim.js";
 
 let activeNotificationHandler: ((message: string) => void) | undefined;
 let activeRawInputHandler: ((data: Buffer | string) => void) | undefined;
@@ -54,6 +55,7 @@ export type TuiSessionInfo = {
   mode: string;
   directory: string;
   memory: string;
+  headerStyle: "small" | "large";
   session?: string;
   version: string;
   contextTokens?: number;
@@ -73,7 +75,9 @@ export type TuiSessionSuggestion = {
 
 type CommandSuggestion = {
   value: string;
+  label?: string;
   description: string;
+  deleteValue?: string;
   needsArgument?: boolean;
   selectable?: boolean;
 };
@@ -86,26 +90,43 @@ const slashCommands: CommandSuggestion[] = [
   { value: "/models", description: "Browse and choose models from all providers" },
   { value: "/thinking", description: "Set reasoning level" },
   { value: "/security", description: "Choose security mode" },
-  { value: "/sessions", description: "Create or open a saved session" },
+  { value: "/sessions", description: "Create/open sessions · dd deletes selected" },
+  { value: "/About", description: "What Raya is and what she can do" },
   { value: "/status", description: "Show current status" },
   { value: "/clear", description: "Clear this conversation" },
   { value: "/exit", description: "Exit Raya" }
 ];
 
-function frameLine(value = ""): string {
-  return `│  ${value.padEnd(43, " ")}│`;
+const largeRayaLogo = [
+  "██████╗  █████╗ ██╗   ██╗ █████╗ ",
+  "██╔══██╗██╔══██╗╚██╗ ██╔╝██╔══██╗",
+  "██████╔╝███████║ ╚████╔╝ ███████║",
+  "██╔══██╗██╔══██║  ╚██╔╝  ██╔══██║",
+  "██║  ██║██║  ██║   ██║   ██║  ██║",
+  "╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝   ╚═╝  ╚═╝",
+];
+
+const largeAppleGlyphs: Record<string, readonly string[]> = {
+  A: [" █████╗ ", "██╔══██╗", "███████║", "██╔══██║", "██║  ██║", "╚═╝  ╚═╝"],
+  P: ["██████╗ ", "██╔══██╗", "██████╔╝", "██╔═══╝ ", "██║     ", "╚═╝     "],
+  L: ["██╗     ", "██║     ", "██║     ", "██║     ", "███████╗", "╚══════╝"],
+  E: ["███████╗", "██╔════╝", "█████╗  ", "██╔══╝  ", "███████╗", "╚══════╝"],
+  ".": ["   ", "   ", "   ", "   ", "   ", " • "]
+};
+
+export function renderLargeAppleWord(): string[] {
+  const glyphs = Array.from("A.P.P.L.E.").map((character) => largeAppleGlyphs[character]!);
+  return Array.from({ length: 6 }, (_, row) => glyphs.map((glyph) => glyph[row]!).join(" "));
 }
 
+const rayaAppleLogo = [...largeRayaLogo, "", ...renderLargeAppleWord()];
+
 function renderHeader(info: TuiSessionInfo): void {
-  console.log("╭─────────────────────────────────────────────╮");
-  console.log(frameLine("RAYA"));
-  console.log(frameLine("Personal AI Operating System"));
-  console.log("╰─────────────────────────────────────────────╯");
+  console.log(color(info.headerStyle === "large" ? rayaAppleLogo.join("\n") : "Raya A.P.P.L.E.", theme.cyan));
   console.log();
   console.log(`Model     : ${info.model}`);
   console.log(`Mode      : ${info.mode}`);
   console.log(`Directory : ${info.directory}`);
-  console.log(`Memory    : ${info.memory}`);
   if (info.session) {
     console.log(`Session   : ${info.session}`);
   }
@@ -131,9 +152,18 @@ function commandSuggestions(
   if (value.startsWith(sessionPrefix) && cursor >= sessionPrefix.length) {
     const query = value.slice(sessionPrefix.length, cursor).toLowerCase();
     const sessions = sessionSuggestions()
-      .filter((session) => `${session.id} ${session.name}`.toLowerCase().includes(query))
-      .map((session) => ({ value: `/sessions open ${session.id}`, description: `${session.name} · ${session.detail}` }));
-    return [{ value: "/sessions new", description: "New session" }, ...sessions];
+      .filter((session) => `${session.id} ${session.name}`.toLowerCase().includes(query));
+    const open = sessions.map((session) => ({
+      value: `/sessions open ${session.id}`,
+      deleteValue: `/sessions delete ${session.id}`,
+      label: session.name,
+      description: session.detail
+    }));
+    return [
+      { value: "/sessions new", description: "New session" },
+      { value: "Sessions · Enter open · dd delete:", description: "", selectable: false },
+      ...(open.length ? open : [{ value: "  (none)", description: "", selectable: false }])
+    ];
   }
   const thinkingPrefix = "/thinking ";
   if (value.startsWith(thinkingPrefix) && cursor >= thinkingPrefix.length) {
@@ -161,7 +191,7 @@ function commandSuggestions(
   const start = activeCommandStart(value, cursor);
   if (start === undefined) return [];
   const query = value.slice(start, cursor).toLowerCase();
-  return slashCommands.filter((command) => command.value.startsWith(query)).slice(0, 12);
+  return slashCommands.filter((command) => command.value.toLowerCase().startsWith(query)).slice(0, 12);
 }
 
 function wordStart(value: string, cursor: number): number {
@@ -179,12 +209,28 @@ function wordEnd(value: string, cursor: number): number {
 }
 
 /** A one-line editor with a terminal dropdown for slash commands. */
-type InputDraft = { value: string; cursor: number };
+type InputDraft = { value: string; cursor: number; neovimMode?: NeovimState["mode"] };
 const MODE_TOGGLE_PREFIX = "__RAYA_TOGGLE_MODE__";
 const EXIT_SIGNAL = "__RAYA_EXIT__";
 const MENU_OPEN_PREFIX = "__RAYA_OPEN_MENU__";
 const MAX_VISIBLE_SUGGESTIONS = 12;
 const MENU_COMMANDS = new Set(["/providers", "/models", "/thinking", "/security", "/sessions"]);
+
+export type SessionDeleteKeyResult =
+  | { kind: "armed"; value: string }
+  | { kind: "delete"; command: string };
+
+export function advanceSessionDeleteKey(deleteValue: string, armedValue?: string): SessionDeleteKeyResult {
+  return armedValue === deleteValue
+    ? { kind: "delete", command: deleteValue }
+    : { kind: "armed", value: deleteValue };
+}
+
+export function sessionDeleteDescription(deleteValue: string | undefined, armedValue: string | undefined, fallback: string): string {
+  return deleteValue && deleteValue === armedValue
+    ? "Press d again to delete · confirmation follows"
+    : fallback;
+}
 
 function selectableIndex(suggestions: CommandSuggestion[], start: number, direction: 1 | -1): number {
   if (!suggestions.some((item) => item.selectable !== false)) return 0;
@@ -207,17 +253,26 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
   thinkingSuggestions?: () => string[];
   providerSuggestions?: (value: string) => CommandSuggestion[];
   modelSuggestions?: (query: string) => CommandSuggestion[];
-}, draft?: InputDraft): Promise<string> {
+  neovimMode?: boolean;
+  neovimConfig?: NeovimConfig;
+}, draft?: InputDraft, history: string[] = []): Promise<string> {
   if (!input.isTTY || !output.isTTY || !input.setRawMode) {
     throw new Error("Raya's interactive TUI requires a TTY terminal.");
   }
 
   let value = draft?.value ?? "";
-  const label = (): string => value.startsWith("!") ? "[Term] > " : `[${mode}] > `;
+  const neovimConfig = options?.neovimMode ? (options.neovimConfig ?? ensureNeovimConfig()) : undefined;
+  const neovimState: NeovimState | undefined = neovimConfig ? createNeovimState(neovimConfig) : undefined;
+  if (neovimState && draft?.neovimMode) neovimState.mode = draft.neovimMode;
+  const label = (): string => value.startsWith("!") ? "[Term] > " : neovimState && neovimConfig?.show_mode ? `[${mode}] [${neovimState.mode}] > ` : `[${mode}] > `;
   let cursor = Math.min(draft?.cursor ?? value.length, value.length);
   let selected = 0;
   let visible = 0;
+  let renderedLines = 0;
   let killBuffer = "";
+  let historyIndex = history.length;
+  let historyDraft = value;
+  let deleteArmedValue: string | undefined;
   let menuDismissed = false;
   let settled = false;
   let onData: (data: Buffer | string) => void;
@@ -227,8 +282,15 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
     const suggestions = menuDismissed ? [] : commandSuggestions(value, cursor, options?.sessionSuggestions, options?.thinkingSuggestions, options?.providerSuggestions, options?.modelSuggestions);
     if (selected >= suggestions.length) selected = Math.max(suggestions.length - 1, 0);
     if (suggestions[selected]?.selectable === false) selected = selectableIndex(suggestions, selected - 1, 1);
+    if (renderedLines > 0) output.write(`\x1b[${renderedLines}B\r\x1b[J\x1b[${renderedLines}A\r`);
     output.write("\r\x1b[J");
-    output.write(color(label(), theme.blue) + value + "\n");
+    let displayValue = value;
+    if (neovimState?.mode === "VISUAL" && neovimState.selectionStart !== undefined && value.length) {
+      const start = Math.min(neovimState.selectionStart, cursor);
+      const end = Math.max(neovimState.selectionStart, cursor) + 1;
+      displayValue = `${value.slice(0, start)}\x1b[7m${value.slice(start, end)}${theme.reset}${value.slice(end)}`;
+    }
+    output.write(color(label(), theme.blue) + displayValue + "\n");
     const windowStart = Math.max(0, Math.min(selected - Math.floor(MAX_VISIBLE_SUGGESTIONS / 2), suggestions.length - MAX_VISIBLE_SUGGESTIONS));
     const visibleSuggestions = suggestions.slice(windowStart, windowStart + MAX_VISIBLE_SUGGESTIONS);
     let suggestionLines = 0;
@@ -244,7 +306,8 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
         continue;
       }
       const marker = index === selected ? color("›", theme.cyan) : " ";
-      const line = `${marker} ${suggestion.value.padEnd(18)} ${color(suggestion.description, theme.gray)}`;
+      const description = sessionDeleteDescription(suggestion.deleteValue, deleteArmedValue, suggestion.description);
+      const line = `${marker} ${(suggestion.label ?? suggestion.value).padEnd(18)} ${color(description, theme.gray)}`;
       output.write(`${line}\n`);
       suggestionLines += 1;
     }
@@ -253,13 +316,13 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
       output.write(`${color(`  ↓ ${hiddenBelow} more`, theme.gray)}\n`);
       suggestionLines += 1;
     }
-    const detailLines = toolActivityDetailLines();
-    for (const line of detailLines) output.write(`${color(line, theme.gray)}\n`);
     const used = compactTokens(current.contextTokens ?? 0);
     const limit = compactTokens(current.contextWindow ?? 0);
     output.write(color(`Context ${used}/${limit} · ${current.model} · ${current.directory} · Raya v${current.version}`, theme.gray) + "\n");
-    visible = suggestionLines + detailLines.length;
-    output.write(`\x1b[${visible + 2}A\r\x1b[${label().length + cursor}C`);
+    visible = suggestionLines;
+    renderedLines = visible + 2;
+    const cursorColumn = visibleWidth(label()) + visibleWidth(value.slice(0, cursor));
+    output.write(`\x1b[${visible + 2}A\r\x1b[${cursorColumn}C`);
   };
 
   const finish = (resolve: (line: string) => void, line: string, echo = true): void => {
@@ -283,6 +346,16 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
     cursor = start + insertion.length;
     selected = 0;
     menuDismissed = false;
+  };
+
+  const navigateHistory = (direction: -1 | 1): void => {
+    if (!history.length) return;
+    if (historyIndex === history.length) historyDraft = value;
+    historyIndex = Math.max(0, Math.min(history.length, historyIndex + direction));
+    value = historyIndex === history.length ? historyDraft : history[historyIndex]!;
+    cursor = value.length;
+    menuDismissed = true;
+    selected = 0;
   };
 
   let onKeypress: (text: string, key: { name?: string; ctrl?: boolean; meta?: boolean; sequence?: string }) => void;
@@ -309,16 +382,25 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
         finish(resolve, EXIT_SIGNAL, false);
         return;
       }
-      if (key.name === "escape" && suggestions.length) {
-        menuDismissed = true;
-        selected = 0;
+      const deleteValue = suggestions[selected]?.deleteValue;
+      if (!key.ctrl && !key.meta && text === "d" && deleteValue) {
+        const next = advanceSessionDeleteKey(deleteValue, deleteArmedValue);
+        if (next.kind === "delete") {
+          finish(resolve, next.command);
+          return;
+        }
+        deleteArmedValue = next.value;
         render();
         return;
       }
-      if (key.ctrl && key.name === "o") {
-        toggleToolActivityDetails();
-        render();
-        return;
+      deleteArmedValue = undefined;
+      if (key.name === "escape" && suggestions.length) {
+        menuDismissed = true;
+        selected = 0;
+        if (!neovimState) {
+          render();
+          return;
+        }
       }
       if (key.name === "up" && suggestions.length) {
         selected = selectableIndex(suggestions, selected, -1);
@@ -330,8 +412,28 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
         render();
         return;
       }
+      if (!suggestions.length && (key.name === "up" || (neovimState?.mode === "NORMAL" && (text === "k" || (key.ctrl && key.name === "p"))))) {
+        navigateHistory(-1);
+        render();
+        return;
+      }
+      if (!suggestions.length && (key.name === "down" || (neovimState?.mode === "NORMAL" && (text === "j" || (key.ctrl && key.name === "n"))))) {
+        navigateHistory(1);
+        render();
+        return;
+      }
+      if (neovimState?.mode === "NORMAL" && suggestions.length && (text === "k" || (key.ctrl && key.name === "p"))) {
+        selected = selectableIndex(suggestions, selected, -1);
+        render();
+        return;
+      }
+      if (neovimState?.mode === "NORMAL" && suggestions.length && (text === "j" || (key.ctrl && key.name === "n"))) {
+        selected = selectableIndex(suggestions, selected, 1);
+        render();
+        return;
+      }
       if (key.name === "tab") {
-        finish(resolve, `${MODE_TOGGLE_PREFIX}${JSON.stringify({ value, cursor })}`, false);
+        finish(resolve, `${MODE_TOGGLE_PREFIX}${JSON.stringify({ value, cursor, neovimMode: neovimState?.mode })}`, false);
         return;
       }
       if (key.name === "return" || key.name === "enter") {
@@ -356,6 +458,19 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
           return;
         }
         finish(resolve, value);
+        return;
+      }
+      if (neovimState && neovimConfig) {
+        const edited = handleNeovimKey(value, cursor, text, key, neovimState, neovimConfig);
+        if (edited.submit) {
+          finish(resolve, edited.value);
+          return;
+        }
+        value = edited.value;
+        cursor = edited.cursor;
+        selected = 0;
+        if (value !== previousValue) menuDismissed = false;
+        render();
         return;
       }
       if (key.ctrl && key.name === "a") {
@@ -489,11 +604,24 @@ export async function runInteractiveTui(inputAgent: Agent, info: TuiSessionInfo,
   providerSuggestions?: (value: string) => TuiCommandSuggestion[];
   modelSuggestions?: (query: string) => TuiCommandSuggestion[];
   statusInfo?: () => TuiSessionInfo;
+  neovimMode?: boolean;
+  neovimConfig?: NeovimConfig;
   onToggleMode?: (agent: Agent) => Promise<{ agent?: Agent; mode: "Plan" | "Build" }> | { agent?: Agent; mode: "Plan" | "Build" };
 }): Promise<void> {
   let agent = inputAgent;
   let mode = info.mode as "Plan" | "Build";
   let draft: InputDraft | undefined;
+  const promptHistory: string[] = [];
+
+  const loadPromptHistory = (): void => {
+    promptHistory.length = 0;
+    for (const message of agent.state.messages as Array<{ role?: string; content?: Array<{ type?: string; text?: string }> }>) {
+      if (message.role !== "user") continue;
+      const text = message.content?.filter((item) => item.type === "text").map((item) => item.text ?? "").join("").trim();
+      if (text) promptHistory.push(text);
+    }
+  };
+  loadPromptHistory();
 
   output.write("\x1b[2J\x1b[H");
   renderHeader(info);
@@ -504,7 +632,7 @@ export async function runInteractiveTui(inputAgent: Agent, info: TuiSessionInfo,
 
   try {
     while (true) {
-      const prompt = await readTuiLine(mode, options?.statusInfo ?? (() => ({ ...info, mode })), options, draft);
+      const prompt = await readTuiLine(mode, options?.statusInfo ?? (() => ({ ...info, mode })), options, draft, promptHistory);
       draft = undefined;
       const message = prompt.trim();
 
@@ -556,11 +684,13 @@ export async function runInteractiveTui(inputAgent: Agent, info: TuiSessionInfo,
         const nextAgent = await options?.onCommand?.({ agent, command: message });
         if (nextAgent) {
           agent = nextAgent;
+          loadPromptHistory();
         }
         continue;
       }
 
       const messagesBeforePrompt = [...agent.state.messages];
+      if (promptHistory.at(-1) !== message) promptHistory.push(message);
       const cancelled = await runAgentPromptWithEscape(agent, message);
       if (cancelled) {
         agent.state.messages = messagesBeforePrompt;
