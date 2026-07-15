@@ -9,7 +9,7 @@ Raya uses **OpenAI Codex via ChatGPT Plus/Pro/Codex OAuth** and API-key provider
 macOS and Linux only (Windows is not supported in v1):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SDH4114/Friday/prime/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/SDH4114/Raya-APPLE/prime/install.sh | bash
 ```
 
 The installer installs Node.js 22 with `nvm` if needed, downloads the repository, builds it, and installs the `raya` binary globally. This GitHub-source approach works before the npm package is published. After publishing `@sdh4114/raya`, the equivalent install is:

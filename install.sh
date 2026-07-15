@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_URL="${RAYA_REPO_URL:-https://github.com/SDH4114/Friday.git}"
+REPO_URL="${RAYA_REPO_URL:-https://github.com/SDH4114/Raya-APPLE.git}"
 REPO_REF="${RAYA_REPO_REF:-prime}"
 NODE_MAJOR="${RAYA_NODE_MAJOR:-22}"
 
