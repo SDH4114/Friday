@@ -30,6 +30,7 @@ import { join, relative } from "node:path";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { RAYA_PLUGINS_DIR } from "../config/paths.js";
+import { openApplication, openUrl, runGitShortcut, webSearchUrl, youtubeSearchUrl } from "./shortcuts.js";
 import {
   createSession,
   deleteSession,
@@ -328,6 +329,42 @@ program
     for (const model of runtime.models.getModels(provider)) {
       console.log(`${model.id}\t${model.name}`);
     }
+  });
+
+program
+  .command("yt")
+  .argument("<query...>", "Text to search for on YouTube.")
+  .description("Open YouTube search results in the browser.")
+  .action(async (query: string[]) => {
+    const text = query.join(" ").trim();
+    await openUrl(youtubeSearchUrl(text));
+    console.log(`YouTube search opened: ${text}`);
+  });
+
+program
+  .command("search")
+  .alias("serach")
+  .argument("<query...>", "Text to search for in the browser.")
+  .description("Open a web search in the browser.")
+  .action(async (query: string[]) => {
+    const text = query.join(" ").trim();
+    await openUrl(webSearchUrl(text));
+    console.log(`Web search opened: ${text}`);
+  });
+
+program
+  .command("git")
+  .description("Stage all changes, create a commit, and push it.")
+  .action(runGitShortcut);
+
+program
+  .command("open")
+  .argument("<application...>", "Application name to open.")
+  .description("Open an application.")
+  .action(async (application: string[]) => {
+    const name = application.join(" ").trim();
+    await openApplication(name);
+    console.log(`Opened application: ${name}`);
   });
 
 program

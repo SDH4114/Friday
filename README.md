@@ -62,6 +62,16 @@ Useful interactive commands:
 /thinking
 /security
 /sessions
+
+Direct shortcuts:
+
+```text
+raya yt <text>              Open YouTube search results in the browser
+raya search <text>          Open a web search in the browser
+raya serach <text>          Alias for raya search (kept for convenience)
+raya git                    git add ., ask for a commit name, commit, then push
+raya open <application>     Open an application
+```
 /About
 /clear
 /exit
