@@ -84,11 +84,16 @@ type CommandSuggestion = {
 
 export type TuiCommandSuggestion = CommandSuggestion;
 
+export function restoredTuiMode(value: string | undefined, current: "Plan" | "Build"): "Plan" | "Build" {
+  return value === "Plan" || value === "Build" ? value : current;
+}
+
 const slashCommands: CommandSuggestion[] = [
   { value: "/help", description: "Show available commands" },
   { value: "/providers", description: "Connect, update, or choose providers" },
   { value: "/models", description: "Browse and choose models from all providers" },
   { value: "/thinking", description: "Set reasoning level" },
+  { value: "/theme", description: "Choose and immediately apply the global theme" },
   { value: "/security", description: "Choose security mode" },
   { value: "/sessions", description: "Create/open sessions · dd deletes selected" },
   { value: "/About", description: "What Raya is and what she can do" },
@@ -216,7 +221,8 @@ function commandSuggestions(
   sessionSuggestions: () => TuiSessionSuggestion[] = () => [],
   thinkingSuggestions: () => string[] = () => [],
   providerSuggestions: (value: string) => CommandSuggestion[] = () => [],
-  modelSuggestions: (query: string) => CommandSuggestion[] = () => []
+  modelSuggestions: (query: string) => CommandSuggestion[] = () => [],
+  themeSuggestions: () => CommandSuggestion[] = () => []
 ): CommandSuggestion[] {
   const sessionPrefix = "/sessions ";
   if (value.startsWith(sessionPrefix) && cursor >= sessionPrefix.length) {
@@ -251,6 +257,9 @@ function commandSuggestions(
       { value: "/security full", description: "Full access · do not ask for approval" }
     ].filter((item) => item.value.slice(securityPrefix.length).startsWith(query));
   }
+  if (value.startsWith("/theme ") && cursor === value.length) {
+    return themeSuggestions();
+  }
   if (value.startsWith("/providers ") && cursor === value.length) {
     return providerSuggestions(value);
   }
@@ -284,7 +293,7 @@ const MODE_TOGGLE_PREFIX = "__RAYA_TOGGLE_MODE__";
 const EXIT_SIGNAL = "__RAYA_EXIT__";
 const MENU_OPEN_PREFIX = "__RAYA_OPEN_MENU__";
 const MAX_VISIBLE_SUGGESTIONS = 12;
-const MENU_COMMANDS = new Set(["/providers", "/models", "/thinking", "/security", "/sessions"]);
+const MENU_COMMANDS = new Set(["/providers", "/models", "/thinking", "/theme", "/security", "/sessions"]);
 
 export type SessionDeleteKeyResult =
   | { kind: "armed"; value: string }
@@ -323,6 +332,7 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
   thinkingSuggestions?: () => string[];
   providerSuggestions?: (value: string) => CommandSuggestion[];
   modelSuggestions?: (query: string) => CommandSuggestion[];
+  themeSuggestions?: () => CommandSuggestion[];
   neovimMode?: boolean;
   neovimConfig?: NeovimConfig;
 }, draft?: InputDraft, history: string[] = []): Promise<string> {
@@ -349,7 +359,7 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
 
   const render = (): void => {
     const current = info();
-    const suggestions = menuDismissed ? [] : commandSuggestions(value, cursor, options?.sessionSuggestions, options?.thinkingSuggestions, options?.providerSuggestions, options?.modelSuggestions);
+    const suggestions = menuDismissed ? [] : commandSuggestions(value, cursor, options?.sessionSuggestions, options?.thinkingSuggestions, options?.providerSuggestions, options?.modelSuggestions, options?.themeSuggestions);
     if (selected >= suggestions.length) selected = Math.max(suggestions.length - 1, 0);
     if (suggestions[selected]?.selectable === false) selected = selectableIndex(suggestions, selected - 1, 1);
     if (renderedLines > 0) output.write(`\x1b[${renderedLines}B\r\x1b[J\x1b[${renderedLines}A\r`);
@@ -409,7 +419,7 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
   };
 
   const insertCommand = (suggestion: CommandSuggestion, addSpace: boolean): void => {
-    const start = activeCommandStart(value, cursor) ?? ((value.startsWith("/sessions") || value.startsWith("/thinking") || value.startsWith("/security") || value.startsWith("/providers") || value.startsWith("/models")) ? 0 : undefined);
+    const start = activeCommandStart(value, cursor) ?? ((value.startsWith("/sessions") || value.startsWith("/thinking") || value.startsWith("/theme") || value.startsWith("/security") || value.startsWith("/providers") || value.startsWith("/models")) ? 0 : undefined);
     if (start === undefined) return;
     const insertion = `${suggestion.value}${addSpace || suggestion.needsArgument ? " " : ""}`;
     value = value.slice(0, start) + insertion + value.slice(cursor);
@@ -437,7 +447,7 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
         return;
       }
       if (bytes.length === 1 && bytes[0] === 0x1b) {
-        const suggestions = menuDismissed ? [] : commandSuggestions(value, cursor, options?.sessionSuggestions, options?.thinkingSuggestions, options?.providerSuggestions, options?.modelSuggestions);
+        const suggestions = menuDismissed ? [] : commandSuggestions(value, cursor, options?.sessionSuggestions, options?.thinkingSuggestions, options?.providerSuggestions, options?.modelSuggestions, options?.themeSuggestions);
         if (suggestions.length) {
           menuDismissed = true;
           selected = 0;
@@ -447,7 +457,7 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
     };
     onKeypress = (text, key) => {
       const previousValue = value;
-      const suggestions = menuDismissed ? [] : commandSuggestions(value, cursor, options?.sessionSuggestions, options?.thinkingSuggestions, options?.providerSuggestions, options?.modelSuggestions);
+      const suggestions = menuDismissed ? [] : commandSuggestions(value, cursor, options?.sessionSuggestions, options?.thinkingSuggestions, options?.providerSuggestions, options?.modelSuggestions, options?.themeSuggestions);
       if (key.ctrl && key.name === "c") {
         finish(resolve, EXIT_SIGNAL, false);
         return;
@@ -510,7 +520,7 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
         if (suggestions.length) {
           const suggestion = suggestions[selected]!;
           if (suggestion.selectable === false) return;
-          const commandAtStart = (activeCommandStart(value, cursor) === 0 || value.startsWith("/sessions") || value.startsWith("/thinking") || value.startsWith("/security") || value.startsWith("/providers") || value.startsWith("/models")) && cursor === value.length;
+          const commandAtStart = (activeCommandStart(value, cursor) === 0 || value.startsWith("/sessions") || value.startsWith("/thinking") || value.startsWith("/theme") || value.startsWith("/security") || value.startsWith("/providers") || value.startsWith("/models")) && cursor === value.length;
           if (commandAtStart && MENU_COMMANDS.has(suggestion.value)) {
             finish(resolve, `${MENU_OPEN_PREFIX}${suggestion.value}`, false);
             return;
@@ -680,6 +690,7 @@ export async function runInteractiveTui(inputAgent: Agent, info: TuiSessionInfo,
   thinkingSuggestions?: () => string[];
   providerSuggestions?: (value: string) => TuiCommandSuggestion[];
   modelSuggestions?: (query: string) => TuiCommandSuggestion[];
+  themeSuggestions?: () => TuiCommandSuggestion[];
   statusInfo?: () => TuiSessionInfo;
   onBeforePrompt?: () => Promise<(() => void) | void> | (() => void) | void;
   neovimMode?: boolean;
@@ -762,6 +773,8 @@ export async function runInteractiveTui(inputAgent: Agent, info: TuiSessionInfo,
         const nextAgent = await options?.onCommand?.({ agent, command: message });
         if (nextAgent) {
           agent = nextAgent;
+          const restoredMode = options?.statusInfo?.().mode;
+          mode = restoredTuiMode(restoredMode, mode);
           loadPromptHistory();
         }
         continue;

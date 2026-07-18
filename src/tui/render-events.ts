@@ -74,14 +74,14 @@ export function renderAgentEvent(event: AgentEvent): void {
     case "tool_execution_start": {
       const summary = formatToolActivity(event.toolName, event.args);
       beginToolActivity(event.toolCallId, summary, event.args);
-      renderToolActivityPanel(output, (line) => color(line, theme.gray));
+      renderToolActivityPanel(output, (line, kind) => color(line, kind === "addition" ? theme.diffAdded : kind === "deletion" ? theme.diffRemoved : kind === "success" ? theme.green : kind === "error" ? theme.red : kind === "accent" ? theme.cyan : theme.gray));
       break;
     }
 
     case "tool_execution_end": {
       const result = textFromToolResult(event.result).replace(/\s+/g, " ");
-      finishToolActivity(event.toolCallId, result, event.isError);
-      renderToolActivityPanel(output, (line) => color(line, theme.gray));
+      finishToolActivity(event.toolCallId, event.result, event.isError);
+      renderToolActivityPanel(output, (line, kind) => color(line, kind === "addition" ? theme.diffAdded : kind === "deletion" ? theme.diffRemoved : kind === "success" ? theme.green : kind === "error" ? theme.red : kind === "accent" ? theme.cyan : theme.gray));
       if (event.isError) output.write(`${color("Raya action failed", theme.red)} ${color(result, theme.gray)}\n`);
       break;
     }

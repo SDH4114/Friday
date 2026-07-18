@@ -5,7 +5,7 @@ import type { Agent } from "@earendil-works/pi-agent-core";
 import { getSupportedThinkingLevels, type Model } from "@earendil-works/pi-ai";
 import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
-import { loadConfig, saveConfig, type RayaConfig } from "../config/config.js";
+import { loadConfig, normalizeConfig, updateConfig, type RayaConfig } from "../config/config.js";
 import { RAYA_CONFIG_PATH } from "../config/paths.js";
 import { readSecret, writeSecret } from "../config/secrets.js";
 import {
@@ -20,7 +20,7 @@ import { createRayaAgent, createRayaTools } from "../agent/create-agent.js";
 import { commandMatchesAutoApprovePrefix } from "../tools/shell.js";
 import { formatToolActivity, renderAgentEvent } from "../tui/render-events.js";
 import { notifyTui, requestTerminalApproval, runInteractiveTui } from "../tui/app.js";
-import { color, theme } from "../tui/theme.js";
+import { color, setActiveTheme, theme, themeLabels, THEME_IDS, type ThemeId } from "../tui/theme.js";
 import { renderMarkdown } from "../tui/markdown.js";
 import { ensureNeovimConfig } from "../tui/neovim.js";
 import { startTelegramService } from "../telegram/service.js";
@@ -47,6 +47,7 @@ import {
 
 const program = new Command();
 const VERSION = "0.2.0";
+setActiveTheme(loadConfig().theme);
 
 class AsyncLock {
   private tail: Promise<void> = Promise.resolve();
@@ -273,8 +274,65 @@ Examples and direct commands:
   raya open <application>      Open a desktop application
   raya gateway --setup         Configure Telegram delivery
   raya gateway --start         Run the Telegram gateway
+  raya local add <model>       Add an Ollama/local OpenAI-compatible model
   raya "explain this repo"     Run a one-shot prompt
 `);
+
+program
+  .command("local")
+  .argument("<action>", "add, remove, or list")
+  .argument("[model]", "Local model id")
+  .description("Manage Ollama, LM Studio, vLLM, or other local OpenAI-compatible models.")
+  .option("--provider <provider>", "Local provider id.", "ollama")
+  .option("--base-url <url>", "OpenAI-compatible /v1 endpoint.")
+  .option("--name <name>", "Display name.")
+  .option("--context-window <tokens>", "Context window.", "32768")
+  .option("--max-tokens <tokens>", "Maximum output tokens.", "8192")
+  .action((action: string, modelId: string | undefined, rawOptions: unknown) => {
+    const options = commandOptions<{ provider?: string; baseUrl?: string; name?: string; contextWindow?: string; maxTokens?: string }>(rawOptions);
+    const config = loadConfig();
+    setActiveTheme(config.theme);
+    if (action === "list") {
+      if (!config.localModels.length) {
+        console.log("No local models configured. Add one with: raya local add <model>");
+        return;
+      }
+      for (const item of config.localModels) {
+        console.log(`${item.provider}\t${item.id}\t${item.baseUrl}\t${item.contextWindow} context`);
+      }
+      return;
+    }
+    if (!modelId?.trim()) throw new Error(`Usage: raya local ${action} <model> [--provider ollama]`);
+    const provider = options.provider?.trim().toLowerCase() || "ollama";
+    if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(provider)) throw new Error("--provider must contain lowercase letters, numbers, dots, underscores, or hyphens.");
+    if (action === "remove") {
+      const localModels = config.localModels.filter((item) => !(item.provider === provider && item.id === modelId));
+      if (localModels.length === config.localModels.length) throw new Error(`Local model not found: ${provider}/${modelId}`);
+      updateConfig({ localModels });
+      console.log(color(`Removed local model ${provider}/${modelId}.`, theme.green));
+      return;
+    }
+    if (action !== "add") throw new Error("Local action must be add, remove, or list.");
+    const defaultUrl = provider === "lmstudio" ? "http://127.0.0.1:1234/v1" : "http://127.0.0.1:11434/v1";
+    const baseUrl = (options.baseUrl ?? defaultUrl).replace(/\/$/, "");
+    const parsedUrl = new URL(baseUrl);
+    if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") throw new Error("--base-url must use http or https.");
+    const contextWindow = Number(options.contextWindow);
+    const maxTokens = Number(options.maxTokens);
+    if (!Number.isInteger(contextWindow) || contextWindow <= 0) throw new Error("--context-window must be a positive integer.");
+    if (!Number.isInteger(maxTokens) || maxTokens <= 0) throw new Error("--max-tokens must be a positive integer.");
+    const nextModel: RayaConfig["localModels"][number] = {
+      provider,
+      id: modelId,
+      name: options.name?.trim() || `${modelId} (${provider})`,
+      baseUrl,
+      contextWindow,
+      maxTokens
+    };
+    const localModels = config.localModels.filter((item) => !(item.provider === provider && item.id === modelId));
+    updateConfig({ localModels: [...localModels, nextModel] });
+    console.log(color(`Added ${provider}/${modelId} at ${baseUrl}. Select it with /models or raya config --provider ${provider} --model ${modelId}.`, theme.green));
+  });
 
 program
   .command("web")
@@ -354,7 +412,7 @@ program
     if(action!=="install"||!packageArg)throw new Error("Usage: raya plugin install npm:<package>");
     const packageName=normalizePiPackageName(packageArg);mkdirSync(RAYA_PLUGINS_DIR,{recursive:true,mode:0o700});
     await new Promise<void>((resolve,reject)=>{const child=spawn("npm",["install","--prefix",RAYA_PLUGINS_DIR,"--ignore-scripts","--no-audit","--no-fund","--",packageName],{stdio:"inherit"});child.on("close",code=>code===0?resolve():reject(new Error(`npm exited ${code}`)));child.on("error",reject);});
-    saveConfig({...config,piPackages:[...new Set([...config.piPackages,packageName])]});
+    updateConfig({ piPackages: [...new Set([...config.piPackages, packageName])] });
     console.log(`Installed ${packageName}. Skills are loaded on the next session. Native Pi extensions require a Raya adapter.`);
   });
 
@@ -373,6 +431,7 @@ program
     console.log(`mode: ${config.mode}`);
     console.log(`security: ${config.securityMode}`);
     console.log(`design: ${config.headerStyle}`);
+    console.log(`theme: ${config.theme}`);
     console.log(`neovim_mode: ${config.neovim_mode}`);
     console.log(`logged_in: ${loggedIn}`);
   });
@@ -446,15 +505,17 @@ program
   .option("--thinking <level>", "Set thinking level: off, minimal, low, medium, high, xhigh.")
   .option("--security <mode>", "Set security mode: standard or full.")
   .option("--design <style>", "Set startup design: small or large.")
+  .option("--theme <theme>", "Set global theme: ocean or sunset.")
   .option("--neovim <boolean>", "Enable or disable Neovim input mode: true or false.")
   .action((rawOptions: unknown) => {
-    const options = commandOptions<{ provider?: string; model?: string; mode?: string; thinking?: string; security?: string; design?: string; neovim?: string }>(rawOptions);
+    const options = commandOptions<{ provider?: string; model?: string; mode?: string; thinking?: string; security?: string; design?: string; theme?: string; neovim?: string }>(rawOptions);
     const config = loadConfig();
     if (options.mode !== undefined && options.mode !== "plan" && options.mode !== "build") throw new Error("--mode must be plan or build.");
     if (options.thinking !== undefined && !["off", "minimal", "low", "medium", "high", "xhigh"].includes(options.thinking)) throw new Error("--thinking must be off, minimal, low, medium, high, or xhigh.");
     if (options.security !== undefined && options.security !== "standard" && options.security !== "full") throw new Error("--security must be standard or full.");
     if (options.neovim !== undefined && options.neovim !== "true" && options.neovim !== "false") throw new Error("--neovim must be true or false.");
     if (options.design !== undefined && options.design !== "small" && options.design !== "large") throw new Error("--design must be small or large.");
+    if (options.theme !== undefined && !THEME_IDS.includes(options.theme as ThemeId)) throw new Error("--theme must be ocean or sunset.");
     let provider = config.provider;
     let modelId = config.model;
     if (options.provider !== undefined || options.model !== undefined) {
@@ -466,20 +527,22 @@ program
       if (!modelId) throw new Error(`Provider has no known models: ${provider}`);
       getConfiguredModel(runtime, provider, modelId);
     }
-    const next = {
-      ...config,
-      provider,
-      model: modelId,
-      mode: (options.mode ?? config.mode) as typeof config.mode,
-      thinkingLevel: (options.thinking ?? config.thinkingLevel) as typeof config.thinkingLevel,
-      securityMode: (options.security ?? config.securityMode) as typeof config.securityMode,
-      headerStyle: (options.design ?? config.headerStyle) as typeof config.headerStyle,
-      neovim_mode: options.neovim === undefined ? config.neovim_mode : options.neovim === "true"
-    };
-    saveConfig(next);
+    const patch: Partial<RayaConfig> = {};
+    if (options.provider !== undefined || options.model !== undefined) {
+      patch.provider = provider;
+      patch.model = modelId;
+    }
+    if (options.mode !== undefined) patch.mode = options.mode as RayaConfig["mode"];
+    if (options.thinking !== undefined) patch.thinkingLevel = options.thinking as RayaConfig["thinkingLevel"];
+    if (options.security !== undefined) patch.securityMode = options.security as RayaConfig["securityMode"];
+    if (options.design !== undefined) patch.headerStyle = options.design as RayaConfig["headerStyle"];
+    if (options.theme !== undefined) patch.theme = options.theme as ThemeId;
+    if (options.neovim !== undefined) patch.neovim_mode = options.neovim === "true";
+    const next = updateConfig(patch);
+    setActiveTheme(next.theme);
     if (next.neovim_mode) ensureNeovimConfig();
     const session = getOrCreateActiveSession(next);
-    session.config = next;
+    session.config = normalizeConfig({ ...session.config, ...patch, theme: next.theme });
     saveSession(session);
     console.log(color(`Saved ${RAYA_CONFIG_PATH}`, theme.green));
   });
@@ -491,6 +554,7 @@ program
     const options = commandOptions<{ runModel?: string }>(rawOptions);
     const prompt = promptParts.join(" ").trim();
     let config = loadConfig();
+    setActiveTheme(config.theme);
     const runtime = createProviderRuntime();
     const connectedProviders = new Set<string>();
     await Promise.all(runtime.models.getProviders().map(async (provider) => {
@@ -525,6 +589,9 @@ program
     const sessionLock = new AsyncLock();
 
     const rebuildAgent = (nextSession = session): Agent => {
+      const globalTheme = loadConfig().theme;
+      nextSession.config = { ...nextSession.config, theme: globalTheme };
+      setActiveTheme(globalTheme);
       const nextModel = getConfiguredModel(runtime, nextSession.config.provider, nextSession.config.model);
       const nextAgent = createRayaAgent({
         config: nextSession.config,
@@ -552,6 +619,7 @@ program
         "/providers                    connect, update, or choose a provider",
         "/models                       browse and choose models from all providers",
         "/thinking                      choose reasoning level",
+        "/theme                         choose and apply the global theme",
         "/security                      choose Standard or Full access",
         "/sessions                     create, open, or delete a session",
         "/About                        what Raya is and what she can do",
@@ -650,6 +718,21 @@ program
         return;
       }
 
+      if (name === "theme") {
+        const requested = (args[0] === "global" || args[0] === "session" ? args[1] : args[0]) as ThemeId | undefined;
+        if (!requested || !THEME_IDS.includes(requested)) {
+          console.log(`Current global theme: ${themeLabels[loadConfig().theme]}. Use /theme and choose a theme.`);
+          return;
+        }
+        config = { ...config, theme: requested };
+        session.config = config;
+        setActiveTheme(requested);
+        updateConfig({ theme: requested });
+        persist(activeAgent);
+        console.log(color(`${themeLabels[requested]} is now the global theme.`, theme.green));
+        return;
+      }
+
       if (name === "security") {
         const securityMode = args[0];
         if (securityMode !== "standard" && securityMode !== "full") {
@@ -715,6 +798,7 @@ program
         console.log(`Mode      : ${config.mode === "plan" ? "Plan" : "Build"}`);
         console.log(`Security  : ${config.securityMode}`);
         console.log(`Design    : ${config.headerStyle}`);
+        console.log(`Theme     : ${themeLabels[config.theme]}`);
         console.log(`Neovim mode  : ${config.neovim_mode ? "Enabled" : "Disabled"}`);
         console.log(`Session   : ${session.name}`);
         console.log(`Config    : ${RAYA_CONFIG_PATH}`);
@@ -801,13 +885,25 @@ program
           detail: `${item.config.provider}/${item.config.model} · ${item.config.mode}`
         })),
         thinkingSuggestions: () => getSupportedThinkingLevels(model),
+        themeSuggestions: () => {
+          const globalTheme = loadConfig().theme;
+          return [
+            { value: "Global theme:", description: "", selectable: false },
+            ...THEME_IDS.map((id) => ({
+              value: `/theme ${id}`,
+              label: themeLabels[id],
+              description: id === globalTheme ? "Current global theme" : "Apply globally"
+            }))
+          ];
+        },
         providerSuggestions: (value) => {
           const managed = value.match(/^\/providers manage (\S+)\s*$/)?.[1];
           if (managed) {
             const connected = connectedProviders.has(managed);
+            const local = config.localModels.some((item) => item.provider === managed);
             return [
-              { value: `/providers use ${managed}`, description: connected ? "Use this connected provider" : "Connect and use this provider" },
-              { value: `/providers connect ${managed}`, description: connected ? "Update API key / reconnect" : "Connect provider" }
+              { value: `/providers use ${managed}`, description: local ? "Use this local provider" : connected ? "Use this connected provider" : "Connect and use this provider" },
+              ...(!local ? [{ value: `/providers connect ${managed}`, description: connected ? "Update API key / reconnect" : "Connect provider" }] : [])
             ];
           }
           const query = value === "/providers" ? "" : value.slice("/providers ".length).trim().toLowerCase();

@@ -5,22 +5,51 @@ import {
   type Models,
   type OAuthCredential,
   type Provider,
-  createModels
+  createProvider
 } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
+import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { nodeAuthContext } from "./auth-context.js";
 import { FileCredentialStore } from "./file-credential-store.js";
+import { loadConfig, type RayaConfig } from "../config/config.js";
 
 export type RayaProviderRuntime = {
   models: Models;
   credentials: FileCredentialStore;
 };
 
-export function createProviderRuntime(): RayaProviderRuntime {
+export function createProviderRuntime(config: RayaConfig = loadConfig()): RayaProviderRuntime {
   const credentials = new FileCredentialStore();
   const models = builtinModels({ credentials, authContext: nodeAuthContext });
+  const grouped = new Map<string, RayaConfig["localModels"]>();
+  for (const item of config.localModels) {
+    grouped.set(item.provider, [...(grouped.get(item.provider) ?? []), item]);
+  }
+  for (const [providerId, localModels] of grouped) {
+    const baseUrl = localModels[0]!.baseUrl;
+    models.setProvider(createProvider({
+      id: providerId,
+      name: providerId === "ollama" ? "Ollama (local)" : providerId === "lmstudio" ? "LM Studio (local)" : `${providerId} (local)`,
+      baseUrl,
+      auth: { apiKey: { name: `${providerId} local server`, resolve: async () => ({ auth: {} }) } },
+      models: localModels.map((item): Model<"openai-completions"> => ({
+        id: item.id,
+        name: item.name,
+        api: "openai-completions",
+        provider: item.provider,
+        baseUrl: item.baseUrl,
+        reasoning: false,
+        input: ["text"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: item.contextWindow,
+        maxTokens: item.maxTokens,
+        compat: { supportsDeveloperRole: false, supportsReasoningEffort: false }
+      })),
+      api: openAICompletionsApi()
+    }));
+  }
   return { models, credentials };
 }
 

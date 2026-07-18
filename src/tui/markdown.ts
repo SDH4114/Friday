@@ -2,17 +2,19 @@ import { color, theme } from "./theme.js";
 
 type Style = keyof typeof theme;
 
-const inlineStyles: Record<string, string> = {
-  red: theme.red,
-  green: theme.green,
-  yellow: theme.yellow,
-  blue: theme.blue,
-  cyan: theme.cyan,
-  magenta: theme.magenta,
-  gray: theme.gray,
-  white: theme.white,
-  dim: theme.dim
-};
+function inlineStyles(): Record<string, string> {
+  return {
+    red: theme.red,
+    green: theme.green,
+    yellow: theme.yellow,
+    blue: theme.blue,
+    cyan: theme.cyan,
+    magenta: theme.magenta,
+    gray: theme.gray,
+    white: theme.white,
+    dim: theme.dim
+  };
+}
 
 function style(value: string, code: string): string {
   return `${code}${value}${theme.reset}`;
@@ -101,9 +103,9 @@ function inline(value: string): string {
   result = result.replace(/!?\[([^\]]+)\]\(([^\s)]+)(?:\s+["'][^"']*["'])?\)/g, (_match, label, url) =>
     protect(`${inline(label)} ${style(`<${url}>`, theme.blue)}`));
   result = result.replace(/\{(red|green|yellow|blue|cyan|magenta|gray|white|dim)\}([\s\S]*?)\{\/\1\}/gi,
-    (_match, name, text) => style(text, inlineStyles[String(name).toLowerCase()] ?? theme.reset));
+    (_match, name, text) => style(text, inlineStyles()[String(name).toLowerCase()] ?? theme.reset));
   result = result.replace(/<span\s+style=["']color:\s*(red|green|yellow|blue|cyan|magenta|gray|white)["']>([\s\S]*?)<\/span>/gi,
-    (_match, name, text) => style(text, inlineStyles[String(name).toLowerCase()] ?? theme.reset));
+    (_match, name, text) => style(text, inlineStyles()[String(name).toLowerCase()] ?? theme.reset));
   result = result.replace(/\*\*(.+?)\*\*|__(.+?)__/g, (_match, boldA, boldB) => style(boldA ?? boldB, theme.bold));
   result = result.replace(/~~(.+?)~~/g, (_match, text) => style(text, theme.dim));
   result = result.replace(/(?<!\*)\*([^*\n]+)\*|(?<!_)_([^_\n]+)_/g, (_match, italicA, italicB) => style(italicA ?? italicB, "\x1b[3m"));
@@ -112,5 +114,5 @@ function inline(value: string): string {
 }
 
 export function markdownStyleKeys(): Style[] {
-  return Object.keys(inlineStyles) as Style[];
+  return Object.keys(inlineStyles()) as Style[];
 }

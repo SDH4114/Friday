@@ -27,24 +27,77 @@ export function finishToolActivity(id: string, result: unknown, isError: boolean
 }
 
 export function collapseToolActivities(): void {
-  // Activity details stay visible; the next agent run replaces this panel.
+  // Completed activity and file diffs remain visible until the next run.
 }
 
-export function renderToolActivityPanel(output: { write(value: string): void }, paint: (value: string) => string): void {
-  if (renderedPanelLines > 0) {
-    output.write(`\x1b[${renderedPanelLines}A\r\x1b[J`);
-  }
+type PaintKind = "normal" | "success" | "error" | "accent" | "addition" | "deletion";
+
+export function renderToolActivityPanel(
+  output: { write(value: string): void },
+  paint: (value: string, kind: PaintKind) => string
+): void {
+  if (renderedPanelLines > 0) output.write(`\x1b[${renderedPanelLines}A\r\x1b[J`);
   const lines = toolActivityDetailLines();
-  for (const line of lines) output.write(`${paint(line)}\n`);
+  for (const line of lines) {
+    const trimmed = line.trimStart();
+    const diffText = trimmed.startsWith("│ ") ? trimmed.slice(2) : trimmed;
+    const kind: PaintKind = diffText.startsWith("+") && !diffText.startsWith("+++")
+      ? "addition"
+      : diffText.startsWith("-") && !diffText.startsWith("---")
+        ? "deletion"
+        : diffText.startsWith("@@") || trimmed.startsWith("╭")
+          ? "accent"
+          : trimmed.includes("[error]")
+            ? "error"
+            : trimmed.includes("[done]")
+              ? "success"
+              : "normal";
+    output.write(`${paint(line, kind)}\n`);
+  }
   renderedPanelLines = lines.length;
+}
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" ? value as Record<string, unknown> : undefined;
+}
+
+function resultDetails(result: unknown): Record<string, unknown> | undefined {
+  return record(record(result)?.details);
+}
+
+function compact(value: unknown, limit = 800): string {
+  const text = typeof value === "string" ? value : JSON.stringify(value);
+  return text.length > limit ? `${text.slice(0, limit)}…` : text;
+}
+
+function activityLines(activity: ToolActivity): string[] {
+  const state = activity.result === undefined ? "running" : activity.isError ? "error" : "done";
+  const args = record(activity.args);
+  const details = resultDetails(activity.result);
+  if (typeof details?.diff === "string") {
+    const path = String(details.path ?? args?.path ?? "file");
+    const verb = details.created ? "Created" : "Edited";
+    return [
+      `╭─ ${verb} ${path}  +${details.additions ?? 0} -${details.deletions ?? 0} [${state}]`,
+      ...details.diff.split("\n").map((line) => `│ ${line}`),
+      "╰─"
+    ];
+  }
+  if (typeof details?.command === "string") {
+    const lines = [`╭─ $ ${details.command} [${state}]`];
+    if (details.stdout) lines.push(...String(details.stdout).trimEnd().split("\n").slice(0, 20).map((line) => `│ ${line}`));
+    if (details.stderr) lines.push(...String(details.stderr).trimEnd().split("\n").slice(0, 20).map((line) => `│ ${line}`));
+    lines.push(`╰─ exit ${details.exitCode ?? "?"}`);
+    return lines;
+  }
+  const safeArgs = args && "content" in args ? { ...args, content: `[${String(args.content).length} chars]` } : activity.args;
+  const result = activity.result === undefined ? "" : ` → ${compact(details ?? activity.result)}`;
+  return [`${activity.summary} [${state}]`, `  ${compact(safeArgs, 500)}${result}`];
 }
 
 export function toolActivityDetailLines(): string[] {
   return activities.flatMap((activity, index) => {
-    const state = activity.result === undefined ? "running" : activity.isError ? "error" : "done";
-    const args = JSON.stringify(activity.args).slice(0, 500);
-    const result = activity.result === undefined ? "" : ` -> ${JSON.stringify(activity.result).slice(0, 500)}`;
-    const block = [`${activity.summary} [${state}]`, `  ${args}${result}`];
+    const block = activityLines(activity);
     return index === activities.length - 1 ? block : [...block, ""];
   });
 }

@@ -1,8 +1,9 @@
 import { Type } from "@earendil-works/pi-ai";
-import { closeSync, existsSync, fstatSync, lstatSync, openSync, readSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, lstatSync, openSync, readFileSync, readSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { mkdirSync } from "node:fs";
 import type { RayaTool, ToolExecutionPolicy } from "../types/tool.js";
+import { createFileDiff } from "./file-diff.js";
 
 const ReadFileParameters = Type.Object({
   path: Type.String({ description: "Workspace-relative file path to read." })
@@ -80,7 +81,7 @@ export function createReadFileTool(workspace = process.cwd()): RayaTool<typeof R
   };
 }
 
-export function createWriteFileTool(policy: ToolExecutionPolicy = {}, workspace = process.cwd()): RayaTool<typeof WriteFileParameters, { path: string; bytes: number }> {
+export function createWriteFileTool(policy: ToolExecutionPolicy = {}, workspace = process.cwd()): RayaTool<typeof WriteFileParameters, { path: string; bytes: number; additions: number; deletions: number; diff: string; created: boolean }> {
   return {
     name: "write_file",
     label: "Write file",
@@ -90,11 +91,21 @@ export function createWriteFileTool(policy: ToolExecutionPolicy = {}, workspace 
     async execute(_toolCallId, params) {
       await policy.confirmDangerousAction?.("write file", params.path);
       const path = workspacePath(workspace, params.path, true);
+      const existed = existsSync(path);
+      const before = existed ? readFileSync(path, "utf8") : undefined;
+      const diff = createFileDiff(before, params.content, displayPath(workspace, path));
       mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, params.content, "utf8");
       return {
-        content: [{ type: "text", text: `wrote ${Buffer.byteLength(params.content, "utf8")} bytes to ${displayPath(workspace, path)}` }],
-        details: { path: displayPath(workspace, path), bytes: Buffer.byteLength(params.content, "utf8") }
+        content: [{ type: "text", text: `wrote ${Buffer.byteLength(params.content, "utf8")} bytes to ${displayPath(workspace, path)} (+${diff.additions} -${diff.deletions})\n\n${diff.text}` }],
+        details: {
+          path: displayPath(workspace, path),
+          bytes: Buffer.byteLength(params.content, "utf8"),
+          additions: diff.additions,
+          deletions: diff.deletions,
+          diff: diff.text,
+          created: !existed
+        }
       };
     }
   };

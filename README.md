@@ -2,7 +2,7 @@
 
 Raya is an MIT-licensed, open-source personal AI PC assistant and coding-agent harness for macOS and Linux. It is deliberately built for a useful daily workflow: one terminal session can work on code, inspect and edit local files, run shell commands, search the web, control applications, and optionally stay reachable through your own Telegram bot.
 
-Raya uses **OpenAI Codex via ChatGPT Plus/Pro/Codex OAuth** and API-key providers through the `@earendil-works/pi-ai` adapter: Anthropic, OpenRouter, OpenCode Zen, and Hugging Face. It uses `@earendil-works/pi-agent-core` rather than reimplementing an agent loop.
+Raya uses **OpenAI Codex via ChatGPT Plus/Pro/Codex OAuth**, API-key providers through the `@earendil-works/pi-ai` adapter, and local OpenAI-compatible inference servers such as Ollama, LM Studio, vLLM, and llama.cpp. It uses `@earendil-works/pi-agent-core` rather than reimplementing an agent loop.
 
 ## Install
 
@@ -40,15 +40,29 @@ raya login             # repeat OAuth login
 raya "explain this repository"  # one-shot prompt
 raya status
 raya models
+raya local add qwen3:8b             # Ollama at 127.0.0.1:11434
+raya local list
 raya gateway --setup
 raya gateway --start
 raya gateway --restart
 raya web               # open the full local Web application
 ```
 
-The terminal UI is intentionally English and uses a monochrome blue palette, including prompts, status messages, approvals, errors, Markdown accents, and tool activity. Every submitted prompt is echoed as `[Plan] > …` or `[Build] > …`, followed by one `Raya` heading and a readable Markdown-rendered answer. Responses support headings, bold, italic, strikethrough, links, inline code, fenced code blocks, lists, task lists, blockquotes, tables, horizontal rules, and semantic terminal colors. Explicit tags such as `{cyan}text{/cyan}`, `red`, `green`, `yellow`, `blue`, `magenta`, `gray`, and `white` are retained for model compatibility but rendered as distinct shades of blue. Tool work is shown immediately as readable expanded blocks such as `Raya is reading …`, `Raya is editing …`, or `Raya is searching …`, including the action input and result. Concurrent actions are separated by one blank line.
+The terminal UI is intentionally English. Every submitted prompt is echoed as `[Plan] > …` or `[Build] > …`, followed by one `Raya` heading and a readable Markdown-rendered answer. Responses support headings, bold, italic, strikethrough, links, inline code, fenced code blocks, lists, task lists, blockquotes, tables, horizontal rules, and semantic terminal colors. Tool work appears immediately in compact activity panels. File writes show a unified diff with a dark red background and bright readable text for removed lines, a dark green background and bright readable text for added lines, and `+/-` totals. Shell panels show the command, readable output, and exit code instead of a raw JSON dump. This makes coding work reviewable before the next prompt while keeping concurrent actions visually separated.
 
-The input prompt shows `[Plan]` or `[Build]`; press Tab at any time to switch modes for the current session only. Existing input and cursor position are preserved. Plan exposes only file-reading tools and a restricted set of simple, read-only shell inspection commands. Build enables file and app changes, but every consequential action shows an **Accept / Refuse** approval picker (arrow keys plus Enter). Start a line with `!` to enter `[Term]` and run that shell command directly in your terminal—the command is never sent to Raya or saved in its conversation. Type `/` anywhere else in the input line to open the main slash-command dropdown. A command-specific dropdown opens only after entering `/models`, `/providers`, `/sessions`, `/thinking`, or `/security` and pressing Enter. `/models` and `/providers` contain the complete built-in catalogs and scroll around the selected row. Use the Up/Down arrow keys to move, Enter to select, and Escape to close any open list. While Raya is generating or running tools, Escape aborts the current run and rolls its unfinished messages out of the session. In `/sessions`, Enter opens the selected session; pressing `dd` on it requests deletion and then shows an **Accept / Refuse** confirmation. `Ctrl+C` exits immediately and prints `Bye bye`. A permanent footer below the input shows context usage, active model, working directory, and Raya version.
+Raya ships with two complete palettes:
+
+- **Ocean Blue** — the original focused blue palette.
+- **Sunset Red** — a high-contrast red, pink, and orange palette.
+
+Enter `/theme` and press Enter to open the theme picker. Selecting a palette applies it immediately and saves it as the global theme without changing any other `config.json` setting. The theme can also be set directly:
+
+```bash
+raya config --theme ocean
+raya config --theme sunset
+```
+
+The input prompt shows `[Plan]` or `[Build]`; press Tab at any time to switch modes for the current session only. Existing input and cursor position are preserved. Plan exposes only file-reading tools and a restricted set of simple, read-only shell inspection commands. Build enables file and app changes, but every consequential action shows an **Accept / Refuse** approval picker (arrow keys plus Enter). Start a line with `!` to enter `[Term]` and run that shell command directly in your terminal—the command is never sent to Raya or saved in its conversation. Type `/` anywhere else in the input line to open the main slash-command dropdown. A command-specific dropdown opens only after entering `/models`, `/providers`, `/sessions`, `/thinking`, `/theme`, or `/security` and pressing Enter. `/models` and `/providers` contain the complete built-in and locally configured catalogs and scroll around the selected row. Use the Up/Down arrow keys to move, Enter to select, and Escape to close any open list. While Raya is generating or running tools, Escape aborts the current run and rolls its unfinished messages out of the session. In `/sessions`, Enter opens the selected session; pressing `dd` on it requests deletion and then shows an **Accept / Refuse** confirmation. `Ctrl+C` exits immediately and prints `Bye bye`. A permanent footer below the input shows context usage, active model, working directory, and Raya version.
 
 The startup screen is a responsive Raya dashboard: identity and live session state appear beside Raya-specific workflow guidance and controls. It becomes a stacked panel in narrow terminals. Use `raya config --design large` for the expanded ASCII identity panel, or `raya config --design small` for the compact core mark.
 
@@ -61,6 +75,7 @@ Useful interactive commands:
 /providers
 /models
 /thinking
+/theme
 /security
 /sessions
 /About
@@ -89,6 +104,46 @@ All tools implement the same `RayaTool` contract (`name`, `description`, JSON sc
 
 Plan mode blocks common mutating shell commands; Build mode permits normal local work. This is a convenience policy, not a security sandbox.
 
+## Local models
+
+Raya can use any local server that implements the OpenAI-compatible chat-completions API. Registering a model does not download it or start its server; start Ollama, LM Studio, vLLM, or llama.cpp first, then add the model to Raya.
+
+Ollama uses `http://127.0.0.1:11434/v1` by default:
+
+```bash
+ollama pull qwen3:8b
+raya local add qwen3:8b
+```
+
+LM Studio commonly uses port 1234:
+
+```bash
+raya local add local-model-id \
+  --provider lmstudio \
+  --base-url http://127.0.0.1:1234/v1 \
+  --name "My LM Studio model"
+```
+
+Custom vLLM or llama.cpp endpoints work the same way:
+
+```bash
+raya local add Qwen/Qwen3-Coder-30B-A3B-Instruct \
+  --provider vllm \
+  --base-url http://127.0.0.1:8000/v1 \
+  --context-window 131072 \
+  --max-tokens 16384
+```
+
+Manage local entries and select one:
+
+```bash
+raya local list
+raya local remove qwen3:8b --provider ollama
+raya config --provider ollama --model qwen3:8b
+```
+
+Local providers are keyless by default, have zero API cost metadata, appear in `/providers` as connected, and appear in `/models` alongside cloud models. Tool calling still depends on the capabilities and chat template of the model served by your local runtime.
+
 ## AGENTS.md and SOUL.md
 
 On every agent creation Raya first checks `~/.raya/AGENTS.md` and `~/.raya/SOUL.md`. For each file that is absent there, Raya walks upward from the current working directory and loads the nearest available copy:
@@ -106,7 +161,7 @@ Structured session state is stored in `~/.raya/sessions.json`. Every save also c
 ~/.raya/memory/sessions/YYYY-MM-DD/<session-id>.md
 ```
 
-Every ordinary `raya` launch starts with a transient empty session. It is not written to disk until the first message is sent. At that point Raya derives a readable session name from the first prompt instead of using a random identifier. Previous non-empty sessions remain available from `/sessions`, including their prompts, answers, tool calls, model, mode, and security settings.
+Every ordinary `raya` launch starts with a transient empty session bound to the directory where `raya` was opened. It is not written to disk until the first message is sent. At that point Raya stores the canonical workspace path and derives a readable session name from the first prompt instead of using a random identifier. `/sessions` only shows sessions belonging to the current directory, so similarly named projects cannot mix histories. Existing sessions created before workspace binding are migrated to the directory of the first Raya launch after upgrading. Every session preserves its own Plan/Build mode independently; opening another session restores that session's mode. The color theme remains global.
 
 Raya can autonomously write compact durable facts to `USER.md` and `MEMORY.md` through her memory tool. `src/memory/skill.ts` remains an extension hook for optional post-session consolidation beyond the built-in model-driven behavior.
 
@@ -166,7 +221,7 @@ For a safer remote path, every dangerous tool action requested from Telegram—s
 
 ## Architecture
 
-- `src/providers/runtime.ts` — `pi-ai` OAuth/API-key provider adapter.
+- `src/providers/runtime.ts` — cloud and local OpenAI-compatible provider adapters.
 - `src/agent/` — system context and `pi-agent-core` loop wiring.
 - `src/tools/` — extensible tool registry.
 - `src/tui/` — streaming terminal UI using `pi-tui` utilities.
@@ -184,7 +239,7 @@ For a safer remote path, every dangerous tool action requested from Telegram—s
 
 ## v2 TODO
 
-- Additional provider adapters and provider-specific setup improvements.
+- Provider-specific setup and local model discovery improvements.
 - Real sandboxing and configurable local approvals.
 - Browser automation.
 - Optional post-session memory consolidation and a complete plugin loader.

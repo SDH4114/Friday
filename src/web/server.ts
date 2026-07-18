@@ -2,7 +2,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { lstatSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
-import { loadConfig, saveConfig, type RayaConfig } from "../config/config.js";
+import { loadConfig, updateConfig, type RayaConfig } from "../config/config.js";
 import { readSecret } from "../config/secrets.js";
 import { createRayaAgent } from "../agent/create-agent.js";
 import { createProviderRuntime, getConfiguredModel, isProviderConfigured } from "../providers/runtime.js";
@@ -242,8 +242,8 @@ export async function runWebServer(options: WebServerOptions): Promise<void> {
         const body = await readJson(request);
         const mode = body.mode;
         if (mode !== "plan" && mode !== "build") throw new Error("mode must be plan or build.");
+        updateConfig({ mode });
         config = { ...config, mode };
-        saveConfig(config);
         session.config = config;
         if (session.messages.length) saveSession(session);
         sendJson(response, 200, config);
