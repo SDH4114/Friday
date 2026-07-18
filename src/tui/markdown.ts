@@ -87,7 +87,7 @@ export function renderMarkdown(markdown: string): string {
     rendered.push(inline(line));
   }
   if (inFence) flushCode();
-  return rendered.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd();
+  return color(rendered.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd(), theme.white);
 }
 
 function inline(value: string): string {

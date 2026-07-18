@@ -24,8 +24,8 @@ export async function requestTerminalApproval(action: string, details: string): 
   const draw = (): void => {
     output.write(rendered ? "\x1b[3A\r\x1b[J" : "\r\x1b[J");
     output.write(`${color("Approval required", theme.yellow)}\n`);
-    output.write(`${action}: ${details}\n`);
-    output.write(`${selected === 0 ? color("› Accept", theme.green) : "  Accept"}    ${selected === 1 ? color("› Refuse", theme.red) : "  Refuse"}\n`);
+    output.write(`${color(`${action}: ${details}`, theme.white)}\n`);
+    output.write(`${selected === 0 ? color("› Accept", theme.green) : color("  Accept", theme.gray)}    ${selected === 1 ? color("› Refuse", theme.red) : color("  Refuse", theme.gray)}\n`);
     rendered = true;
   };
 
@@ -119,17 +119,88 @@ export function renderLargeAppleWord(): string[] {
   return Array.from({ length: 6 }, (_, row) => glyphs.map((glyph) => glyph[row]!).join(" "));
 }
 
-const rayaAppleLogo = [...largeRayaLogo, "", ...renderLargeAppleWord()];
+function fitCell(value: string, width: number): string {
+  if (width <= 0) return "";
+  if (visibleWidth(value) <= width) return value + " ".repeat(width - visibleWidth(value));
+  if (width === 1) return "…";
+  let clipped = "";
+  for (const character of Array.from(value)) {
+    if (visibleWidth(`${clipped}${character}…`) > width) break;
+    clipped += character;
+  }
+  const result = `${clipped}…`;
+  return result + " ".repeat(Math.max(width - visibleWidth(result), 0));
+}
+
+function dashboardTitle(width: number, title: string): string {
+  const innerWidth = Math.max(width - 2, 0);
+  const rawLabel = `─ ${title} `;
+  const label = visibleWidth(rawLabel) <= innerWidth ? rawLabel : fitCell(rawLabel, innerWidth).trimEnd();
+  return `╭${label}${"─".repeat(Math.max(innerWidth - visibleWidth(label), 0))}╮`;
+}
+
+function statusLines(info: TuiSessionInfo): string[] {
+  const brand = info.headerStyle === "large"
+    ? [...largeRayaLogo, "       A.P.P.L.E. SYSTEM"]
+    : ["        ◢◤  RAYA  ◥◣", "       A.P.P.L.E. CORE"];
+  return [
+    ...brand,
+    "",
+    `Model      ${info.model}`,
+    `Mode       ${info.mode}`,
+    `Workspace  ${info.directory}`,
+    `Session    ${info.session ?? "Fresh session"}`,
+    `Memory     ${info.memory}`
+  ];
+}
+
+const protocolLines = [
+  "Raya A.P.P.L.E.",
+  "Adaptive",
+  "Personal",
+  "Processing and",
+  "Logic",
+  "Engine",
+  "",
+  "CONTROL DECK",
+  "Tab          switch Plan ↔ Build",
+  "/help        commands and shortcuts",
+  "/sessions    continue earlier work",
+  "Esc          stop the current run",
+  "/exit and Ctrl+C       quit",
+];
+
+export function renderStartupDashboard(info: TuiSessionInfo, requestedWidth = 120): string[] {
+  const width = Math.max(32, Math.min(Math.floor(requestedWidth), 160));
+  const title = `Raya A.P.P.L.E.  v${info.version}`;
+  const left = statusLines(info);
+
+  if (width < 88) {
+    const contentWidth = width - 4;
+    const lines = [...left, "", ...protocolLines];
+    return [
+      dashboardTitle(width, title),
+      ...lines.map((line) => `│ ${fitCell(line, contentWidth)} │`),
+      `╰${"─".repeat(width - 2)}╯`
+    ];
+  }
+
+  const available = width - 7;
+  const leftWidth = Math.max(34, Math.floor(available * 0.38));
+  const rightWidth = available - leftWidth;
+  const height = Math.max(left.length, protocolLines.length);
+  const rows = Array.from({ length: height }, (_, index) =>
+    `│ ${fitCell(left[index] ?? "", leftWidth)} │ ${fitCell(protocolLines[index] ?? "", rightWidth)} │`);
+  return [
+    dashboardTitle(width, title),
+    ...rows,
+    `╰${"─".repeat(leftWidth + 2)}┴${"─".repeat(rightWidth + 2)}╯`
+  ];
+}
 
 function renderHeader(info: TuiSessionInfo): void {
-  console.log(color(info.headerStyle === "large" ? rayaAppleLogo.join("\n") : "Raya A.P.P.L.E.", theme.cyan));
-  console.log();
-  console.log(`Model     : ${info.model}`);
-  console.log(`Mode      : ${info.mode}`);
-  console.log(`Directory : ${info.directory}`);
-  if (info.session) {
-    console.log(`Session   : ${info.session}`);
-  }
+  const width = output.columns ? Math.max(output.columns - 2, 32) : 120;
+  console.log(color(renderStartupDashboard(info, width).join("\n"), theme.cyan));
   console.log();
 }
 
@@ -290,7 +361,7 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
       const end = Math.max(neovimState.selectionStart, cursor) + 1;
       displayValue = `${value.slice(0, start)}\x1b[7m${value.slice(start, end)}${theme.reset}${value.slice(end)}`;
     }
-    output.write(color(label(), theme.blue) + displayValue + "\n");
+    output.write(color(label(), theme.blue) + color(displayValue, theme.white) + "\n");
     const windowStart = Math.max(0, Math.min(selected - Math.floor(MAX_VISIBLE_SUGGESTIONS / 2), suggestions.length - MAX_VISIBLE_SUGGESTIONS));
     const visibleSuggestions = suggestions.slice(windowStart, windowStart + MAX_VISIBLE_SUGGESTIONS);
     let suggestionLines = 0;
@@ -307,7 +378,7 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
       }
       const marker = index === selected ? color("›", theme.cyan) : " ";
       const description = sessionDeleteDescription(suggestion.deleteValue, deleteArmedValue, suggestion.description);
-      const line = `${marker} ${(suggestion.label ?? suggestion.value).padEnd(18)} ${color(description, theme.gray)}`;
+      const line = `${marker} ${color((suggestion.label ?? suggestion.value).padEnd(18), theme.white)} ${color(description, theme.gray)}`;
       output.write(`${line}\n`);
       suggestionLines += 1;
     }
@@ -334,7 +405,7 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
     input.pause();
     activeNotificationHandler = undefined;
     output.write("\r\x1b[J");
-    if (echo) output.write(color(label(), theme.blue) + line + "\n");
+    if (echo) output.write(color(label(), theme.blue) + color(line, theme.white) + "\n");
     resolve(line);
   };
 
