@@ -123,7 +123,7 @@ export function assertNotBlocked(command: string, blockedCommands: string[]): vo
   if (blocked) throw new Error(`This command is blocked by Raya configuration: ${blocked}`);
 }
 
-export function createShellTool(config: RayaConfig, policy: ToolExecutionPolicy = {}): RayaTool<typeof ShellParameters, ShellDetails> {
+export function createShellTool(config: RayaConfig, policy: ToolExecutionPolicy = {}, workspace = process.cwd()): RayaTool<typeof ShellParameters, ShellDetails> {
   return {
     name: "shell",
     label: "Shell",
@@ -137,7 +137,7 @@ export function createShellTool(config: RayaConfig, policy: ToolExecutionPolicy 
       if (requiresShellApproval(params.command)) await policy.confirmDangerousAction?.("run shell command", params.command);
       const result = await new Promise<ShellDetails>((resolve, reject) => {
         const child = spawn(params.command, {
-          cwd: process.cwd(),
+          cwd: workspace,
           shell: process.env.SHELL ?? "/bin/sh",
           stdio: ["ignore", "pipe", "pipe"],
           detached: true

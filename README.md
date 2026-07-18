@@ -43,6 +43,7 @@ raya models
 raya gateway --setup
 raya gateway --start
 raya gateway --restart
+raya web               # open the full local Web application
 ```
 
 The terminal UI is intentionally English and uses a monochrome blue palette, including prompts, status messages, approvals, errors, Markdown accents, and tool activity. Every submitted prompt is echoed as `[Plan] > …` or `[Build] > …`, followed by one `Raya` heading and a readable Markdown-rendered answer. Responses support headings, bold, italic, strikethrough, links, inline code, fenced code blocks, lists, task lists, blockquotes, tables, horizontal rules, and semantic terminal colors. Explicit tags such as `{cyan}text{/cyan}`, `red`, `green`, `yellow`, `blue`, `magenta`, `gray`, and `white` are retained for model compatibility but rendered as distinct shades of blue. Tool work is shown immediately as readable expanded blocks such as `Raya is reading …`, `Raya is editing …`, or `Raya is searching …`, including the action input and result. Concurrent actions are separated by one blank line.
@@ -145,7 +146,13 @@ Skills shipped inside installed pi packages are loaded on the next session. Pack
 
 Raya injects bounded frozen snapshots from `~/.raya/USER.md` (1,375 chars) and `~/.raya/MEMORY.md` (2,200 chars). Raya autonomously saves durable preferences, corrections, project decisions, and reusable lessons through the `memory` tool; writes are persisted immediately and appear in the next session's prompt. She can also list, search, and read saved sessions when earlier context is relevant.
 
-The `schedule` tool stores one-time and daily tasks in `~/.raya/scheduled.json`. Due tasks are delivered while the Raya TUI or Telegram gateway is running; restarting Raya reloads pending tasks from disk.
+The `schedule` tool stores one-time and daily tasks in `~/.raya/scheduled.json`. Every scheduled task is delivered through Telegram; a failed or unavailable Telegram delivery leaves the task pending for retry. Reminders created in Raya Web are sent to Telegram and additionally shown as browser notifications. Restarting Raya reloads pending tasks from disk.
+
+## Raya Web
+
+Run `raya web` to open the full local application at `http://127.0.0.1:4177`. Use `raya web --port <port>` to choose another port or `raya web --no-open` to start without opening the browser. The server binds only to localhost.
+
+Raya Web includes the existing agent and session workflow plus Calendar, Reminders, Scheduled tasks, Workspaces, and connected Notes. Each registered workspace folder can edit its own `AGENTS.md` and `SOUL.md`; selecting that workspace gives the chat agent the matching folder context and filesystem root. Notes create bidirectional graph links with `[[Note title]]`. Web data is kept in `~/.raya/web.json` with owner-only permissions.
 
 Security can be selected interactively with `/security`, or configured as the default with `raya config --security standard|full`. Standard asks for consequential Build actions. Full skips approval prompts, while `blockedCommands` remains active as a defense-in-depth check.
 

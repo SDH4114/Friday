@@ -33,6 +33,7 @@ import { spawn } from "node:child_process";
 import { RAYA_PLUGINS_DIR } from "../config/paths.js";
 import { openApplication, openUrl, runGitShortcut, webSearchUrl, youtubeSearchUrl } from "./shortcuts.js";
 import { normalizePiPackageName } from "../plugins/package.js";
+import { runWebServer } from "../web/server.js";
 import {
   createSession,
   deleteSession,
@@ -248,7 +249,10 @@ async function runGateway(config: RayaConfig): Promise<void> {
     }
   });
   const chatId=readSecret("RAYA_TELEGRAM_ALLOWED_CHAT_ID");
-  const stopScheduled=startScheduler(async (task)=>{if(chatId)await gateway.sendMessage(chatId,`Reminder: ${task.message}`);else console.log(`Reminder: ${task.message}`);}, (error) => console.error(color(`Scheduler: ${error.message}`, theme.red)));
+  const stopScheduled=startScheduler(async (task)=>{
+    if (!chatId) throw new Error("Scheduled delivery requires a Telegram chat ID. Run raya gateway --setup.");
+    await gateway.sendMessage(chatId,`Reminder: ${task.message}`);
+  }, (error) => console.error(color(`Scheduler: ${error.message}`, theme.red)));
   console.log(color("Telegram gateway running. Press Ctrl+C to stop.", theme.cyan));
   await new Promise<void>((resolve) => process.once("SIGINT", resolve));
   stopScheduled();
@@ -258,7 +262,31 @@ async function runGateway(config: RayaConfig): Promise<void> {
 program
   .name("raya")
   .description("Open-source AI coding agent harness for the terminal.")
-  .version(VERSION);
+  .version(VERSION)
+  .addHelpText("after", `
+Examples and direct commands:
+  raya                         Start the terminal interface
+  raya web                     Open the full Raya Web app
+  raya git                     Stage, commit, and push the current repository
+  raya yt <text>               Open a YouTube search
+  raya search <text>           Open a web search
+  raya open <application>      Open a desktop application
+  raya gateway --setup         Configure Telegram delivery
+  raya gateway --start         Run the Telegram gateway
+  raya "explain this repo"     Run a one-shot prompt
+`);
+
+program
+  .command("web")
+  .description("Open the full local Raya Web app.")
+  .option("-p, --port <port>", "Local port. Defaults to 4177.", "4177")
+  .option("--no-open", "Start without opening the browser.")
+  .action(async (rawOptions: unknown) => {
+    const options = commandOptions<{ port?: string; open?: boolean }>(rawOptions);
+    const port = Number(options.port ?? "4177");
+    if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error("--port must be an integer from 1 to 65535.");
+    await runWebServer({ port, open: options.open, version: VERSION });
+  });
 
 program
   .command("login")
@@ -706,9 +734,10 @@ program
     }
 
     const telegramToken = readSecret("RAYA_TELEGRAM_BOT_TOKEN");
+    const telegramChatId = readSecret("RAYA_TELEGRAM_ALLOWED_CHAT_ID");
     const telegram = telegramToken ? startTelegramService({
       token: telegramToken,
-      allowedChatId: readSecret("RAYA_TELEGRAM_ALLOWED_CHAT_ID"),
+      allowedChatId: telegramChatId,
       onError: (error) => notifyTui(`Telegram unavailable: ${error.message}`),
       onPrompt: async (remotePrompt, toolPolicy, signal) => sessionLock.run(async () => {
           let streamed = "";
@@ -731,7 +760,10 @@ program
     }) : undefined;
 
     if (telegram) console.log(color("Telegram listener started for this Raya session.", theme.cyan));
-    const stopScheduler = startScheduler((task) => notifyTui(`Reminder: ${task.message}`), (error) => notifyTui(`Scheduler error: ${error.message}`));
+    const stopScheduler = startScheduler(async (task) => {
+      if (!telegram || !telegramChatId) throw new Error("Scheduled delivery requires Telegram setup: raya gateway --setup");
+      await telegram.sendMessage(telegramChatId, `Reminder: ${task.message}`);
+    }, (error) => notifyTui(`Scheduler error: ${error.message}`));
     let signalExitStarted = false;
     const exitImmediately = (): void => {
       if (signalExitStarted) return;

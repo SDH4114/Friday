@@ -11,10 +11,11 @@ export function createRayaTools(input: {
   model: Model<any>;
   models: Models;
   toolPolicy?: ToolExecutionPolicy;
+  workspace?: string;
 }) {
   return [
-    ...createDefaultTools(input.config, input.toolPolicy),
-    createSubagentTool(input.config, input.model, input.models, input.toolPolicy)
+    ...createDefaultTools(input.config, input.toolPolicy, input.workspace),
+    createSubagentTool(input.config, input.model, input.models, input.toolPolicy, input.workspace)
   ];
 }
 
@@ -24,10 +25,11 @@ export function createRayaAgent(input: {
   models: Models;
   onEvent: (event: AgentEvent) => Promise<void> | void;
   toolPolicy?: ToolExecutionPolicy;
+  workspace?: string;
 }): Agent {
   const agent = new Agent({
     initialState: {
-      systemPrompt: createSystemPrompt(),
+      systemPrompt: createSystemPrompt(input.workspace),
       model: input.model,
       thinkingLevel: input.config.thinkingLevel,
       tools: createRayaTools(input),

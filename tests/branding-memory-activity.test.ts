@@ -35,6 +35,7 @@ test("startup dashboard is Raya-specific, responsive, and geometrically aligned"
   assert.doesNotMatch(wide.join("\n"), /RAYA PROTOCOL/);
   assert.doesNotMatch(wide.join("\n"), /Understand → inspect → act → verify/);
   assert.match(wide.join("\n"), /\/exit and Ctrl\+C\s+quit/);
+  assert.doesNotMatch(wide.join("\n"), /Esc\s+stop the current run/);
   assert.doesNotMatch(wide.join("\n"), /Welcome back|Tips for getting started|What's new/);
 
   const narrow = renderStartupDashboard(info, 72);

@@ -3,16 +3,17 @@ import { memorySnapshot } from "../memory/store.js";
 import { RAYA_HOME } from "../config/paths.js";
 import { findPreferredWorkspaceInstruction } from "./workspace-instructions.js";
 
-function loadWorkspaceInstruction(name: "AGENTS.md" | "SOUL.md"): string | undefined {
-  return findPreferredWorkspaceInstruction(name, RAYA_HOME)?.content;
+function loadWorkspaceInstruction(name: "AGENTS.md" | "SOUL.md", workspace: string): string | undefined {
+  return findPreferredWorkspaceInstruction(name, RAYA_HOME, workspace)?.content;
 }
 
-export function createSystemPrompt(): string {
-  const agents = loadWorkspaceInstruction("AGENTS.md");
-  const soul = loadWorkspaceInstruction("SOUL.md");
+export function createSystemPrompt(workspace = process.cwd()): string {
+  const agents = loadWorkspaceInstruction("AGENTS.md", workspace);
+  const soul = loadWorkspaceInstruction("SOUL.md", workspace);
   return `You are Raya, a personal AI PC assistant and coding agent running in a user's terminal.
 
 Work as a pragmatic senior engineer. Prefer inspecting the workspace with tools before changing assumptions.
+Current workspace: ${workspace}
 
 Available tools:
 - list_files/read_file: inspect workspace files.

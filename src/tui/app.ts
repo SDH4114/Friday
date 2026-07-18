@@ -166,7 +166,6 @@ const protocolLines = [
   "Tab          switch Plan ↔ Build",
   "/help        commands and shortcuts",
   "/sessions    continue earlier work",
-  "Esc          stop the current run",
   "/exit and Ctrl+C       quit",
 ];
 

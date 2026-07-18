@@ -38,8 +38,8 @@ function isInside(root: string, path: string): boolean {
   return path === root || path.startsWith(`${root}/`);
 }
 
-function workspacePath(path: string, allowMissing = false): string {
-  const lexicalRoot = resolve(process.cwd());
+function workspacePath(root: string, path: string, allowMissing = false): string {
+  const lexicalRoot = resolve(root);
   const realRoot = realpathSync(lexicalRoot);
   const resolved = resolve(lexicalRoot, path);
   if (!isInside(lexicalRoot, resolved)) {
@@ -59,28 +59,28 @@ function workspacePath(path: string, allowMissing = false): string {
   return resolved;
 }
 
-function displayPath(path: string): string {
-  return relative(process.cwd(), path) || ".";
+function displayPath(root: string, path: string): string {
+  return relative(root, path) || ".";
 }
 
-export function createReadFileTool(): RayaTool<typeof ReadFileParameters, { path: string }> {
+export function createReadFileTool(workspace = process.cwd()): RayaTool<typeof ReadFileParameters, { path: string }> {
   return {
     name: "read_file",
     label: "Read file",
     description: "Read a text file from the current workspace.",
     parameters: ReadFileParameters,
     async execute(_toolCallId, params) {
-      const path = workspacePath(params.path);
+      const path = workspacePath(workspace, params.path);
       const text = readTextBounded(path);
       return {
-        content: [{ type: "text", text: `path: ${displayPath(path)}\n\n${text}` }],
-        details: { path: displayPath(path) }
+        content: [{ type: "text", text: `path: ${displayPath(workspace, path)}\n\n${text}` }],
+        details: { path: displayPath(workspace, path) }
       };
     }
   };
 }
 
-export function createWriteFileTool(policy: ToolExecutionPolicy = {}): RayaTool<typeof WriteFileParameters, { path: string; bytes: number }> {
+export function createWriteFileTool(policy: ToolExecutionPolicy = {}, workspace = process.cwd()): RayaTool<typeof WriteFileParameters, { path: string; bytes: number }> {
   return {
     name: "write_file",
     label: "Write file",
@@ -89,25 +89,25 @@ export function createWriteFileTool(policy: ToolExecutionPolicy = {}): RayaTool<
     executionMode: "sequential",
     async execute(_toolCallId, params) {
       await policy.confirmDangerousAction?.("write file", params.path);
-      const path = workspacePath(params.path, true);
+      const path = workspacePath(workspace, params.path, true);
       mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, params.content, "utf8");
       return {
-        content: [{ type: "text", text: `wrote ${Buffer.byteLength(params.content, "utf8")} bytes to ${displayPath(path)}` }],
-        details: { path: displayPath(path), bytes: Buffer.byteLength(params.content, "utf8") }
+        content: [{ type: "text", text: `wrote ${Buffer.byteLength(params.content, "utf8")} bytes to ${displayPath(workspace, path)}` }],
+        details: { path: displayPath(workspace, path), bytes: Buffer.byteLength(params.content, "utf8") }
       };
     }
   };
 }
 
-export function createListFilesTool(): RayaTool<typeof ListFilesParameters, { entries: string[] }> {
+export function createListFilesTool(workspace = process.cwd()): RayaTool<typeof ListFilesParameters, { entries: string[] }> {
   return {
     name: "list_files",
     label: "List files",
     description: "List files and directories in the current workspace.",
     parameters: ListFilesParameters,
     async execute(_toolCallId, params) {
-      const start = workspacePath(params.path ?? ".");
+      const start = workspacePath(workspace, params.path ?? ".");
       const maxEntries = Math.max(1, Math.min(Math.floor(params.maxEntries ?? 200), 1000));
 
       const entries: string[] = [];
@@ -117,7 +117,7 @@ export function createListFilesTool(): RayaTool<typeof ListFilesParameters, { en
         }
         const stat = lstatSync(path);
         if (stat.isSymbolicLink()) {
-          entries.push(`${displayPath(path)} -> [symbolic link]`);
+          entries.push(`${displayPath(workspace, path)} -> [symbolic link]`);
           return;
         }
         if (stat.isDirectory()) {
@@ -129,7 +129,7 @@ export function createListFilesTool(): RayaTool<typeof ListFilesParameters, { en
           }
           return;
         }
-        entries.push(displayPath(path));
+        entries.push(displayPath(workspace, path));
       };
 
       visit(start);

@@ -9,7 +9,10 @@ const ScheduledTaskSchema = z.object({
   message: z.string().min(1),
   nextRun: z.string().datetime({ offset: true }),
   repeat: z.enum(["none", "daily"]),
-  enabled: z.boolean()
+  enabled: z.boolean(),
+  kind: z.enum(["reminder", "scheduled"]).default("scheduled"),
+  source: z.enum(["agent", "web"]).default("agent"),
+  webNotification: z.boolean().default(false)
 });
 
 export type ScheduledTask = z.infer<typeof ScheduledTaskSchema>;
@@ -25,7 +28,12 @@ function save(tasks: ScheduledTask[]): void {
   writePrivateFileAtomic(RAYA_SCHEDULE_PATH, `${JSON.stringify(z.array(ScheduledTaskSchema).parse(tasks), null, 2)}\n`);
 }
 
-export function createScheduled(message: string, nextRun: string, repeat: "none" | "daily"): ScheduledTask {
+export function createScheduled(
+  message: string,
+  nextRun: string,
+  repeat: "none" | "daily",
+  metadata: Partial<Pick<ScheduledTask, "kind" | "source" | "webNotification">> = {}
+): ScheduledTask {
   const date = new Date(nextRun);
   if (!Number.isFinite(date.getTime())) throw new Error(`Invalid scheduled date: ${nextRun}`);
   const task = ScheduledTaskSchema.parse({
@@ -33,7 +41,10 @@ export function createScheduled(message: string, nextRun: string, repeat: "none"
     message: message.trim(),
     nextRun: date.toISOString(),
     repeat,
-    enabled: true
+    enabled: true,
+    kind: metadata.kind ?? "scheduled",
+    source: metadata.source ?? "agent",
+    webNotification: metadata.webNotification ?? false
   });
   const tasks = listScheduled();
   tasks.push(task);
