@@ -1,5 +1,6 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { ensureRayaHome, RAYA_LEGACY_VIM_CONFIG_PATH, RAYA_NEOVIM_CONFIG_PATH } from "../config/paths.js";
+import { writePrivateFileAtomic } from "../storage/atomic-file.js";
 
 export type NeovimMode = "NORMAL" | "INSERT" | "VISUAL" | "REPLACE";
 export type NeovimKey = { name?: string; ctrl?: boolean; meta?: boolean; shift?: boolean; sequence?: string };
@@ -59,7 +60,7 @@ export function ensureNeovimConfig(): NeovimConfig {
     ? RAYA_NEOVIM_CONFIG_PATH
     : existsSync(RAYA_LEGACY_VIM_CONFIG_PATH) ? RAYA_LEGACY_VIM_CONFIG_PATH : undefined;
   if (!sourcePath) {
-    writeFileSync(RAYA_NEOVIM_CONFIG_PATH, `${JSON.stringify(DEFAULT_NEOVIM_CONFIG, null, 2)}\n`, { mode: 0o600 });
+    writePrivateFileAtomic(RAYA_NEOVIM_CONFIG_PATH, `${JSON.stringify(DEFAULT_NEOVIM_CONFIG, null, 2)}\n`);
     return DEFAULT_NEOVIM_CONFIG;
   }
   try {
@@ -71,7 +72,7 @@ export function ensureNeovimConfig(): NeovimConfig {
       bindings: { ...DEFAULT_NEOVIM_CONFIG.bindings, ...(raw.bindings ?? {}) }
     };
     if (sourcePath !== RAYA_NEOVIM_CONFIG_PATH || JSON.stringify(raw) !== JSON.stringify(merged)) {
-      writeFileSync(RAYA_NEOVIM_CONFIG_PATH, `${JSON.stringify(merged, null, 2)}\n`, { mode: 0o600 });
+      writePrivateFileAtomic(RAYA_NEOVIM_CONFIG_PATH, `${JSON.stringify(merged, null, 2)}\n`);
     }
     return merged;
   } catch {

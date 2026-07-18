@@ -11,12 +11,13 @@ import { readSecret, writeSecret } from "../config/secrets.js";
 import {
   createProviderRuntime,
   getConfiguredModel,
+  getProvider,
   isProviderConfigured,
   loginProvider,
   logoutProvider
 } from "../providers/runtime.js";
-import { createRayaAgent } from "../agent/create-agent.js";
-import { createDefaultTools } from "../tools/index.js";
+import { createRayaAgent, createRayaTools } from "../agent/create-agent.js";
+import { commandMatchesAutoApprovePrefix } from "../tools/shell.js";
 import { formatToolActivity, renderAgentEvent } from "../tui/render-events.js";
 import { notifyTui, requestTerminalApproval, runInteractiveTui } from "../tui/app.js";
 import { color, theme } from "../tui/theme.js";
@@ -31,6 +32,7 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { RAYA_PLUGINS_DIR } from "../config/paths.js";
 import { openApplication, openUrl, runGitShortcut, webSearchUrl, youtubeSearchUrl } from "./shortcuts.js";
+import { normalizePiPackageName } from "../plugins/package.js";
 import {
   createSession,
   deleteSession,
@@ -44,6 +46,37 @@ import {
 
 const program = new Command();
 const VERSION = "0.2.0";
+
+class AsyncLock {
+  private tail: Promise<void> = Promise.resolve();
+
+  async acquire(): Promise<() => void> {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const previous = this.tail.catch(() => undefined);
+    this.tail = previous.then(() => gate);
+    await previous;
+    return release;
+  }
+
+  async run<T>(operation: () => Promise<T> | T): Promise<T> {
+    const release = await this.acquire();
+    try { return await operation(); }
+    finally { release(); }
+  }
+}
+
+async function promptWithAbort(agent: Agent, prompt: string, signal: AbortSignal): Promise<void> {
+  const abort = (): void => agent.abort();
+  if (signal.aborted) throw new Error("Telegram service stopped.");
+  signal.addEventListener("abort", abort, { once: true });
+  try {
+    await agent.prompt(prompt);
+    await agent.waitForIdle();
+  } finally {
+    signal.removeEventListener("abort", abort);
+  }
+}
 
 function formatDirectory(path: string): string {
   const home = homedir();
@@ -65,13 +98,18 @@ function authLabel(provider: { auth: { oauth?: unknown; apiKey?: unknown } }): s
   return labels.join("+") || "unknown";
 }
 
+function availablePreferredProviders(runtime: ReturnType<typeof createProviderRuntime>) {
+  const available = new Set(runtime.models.getProviders().map((provider) => provider.id));
+  return preferredProviders.filter((item) => available.has(item.id));
+}
+
 function printProviderMenu(runtime: ReturnType<typeof createProviderRuntime>): void {
   console.log("Choose provider:");
   const providers = runtime.models.getProviders();
   const byId = new Map(providers.map((provider) => [provider.id, provider]));
   let index = 1;
 
-  for (const item of preferredProviders) {
+  for (const item of availablePreferredProviders(runtime)) {
     const provider = byId.get(item.id);
     if (!provider) continue;
     console.log(`${index}. ${item.label} (${provider.id}) - ${authLabel(provider)} - ${item.hint}`);
@@ -88,13 +126,14 @@ function printProviderMenu(runtime: ReturnType<typeof createProviderRuntime>): v
 
 async function chooseProvider(runtime: ReturnType<typeof createProviderRuntime>, fallback: string): Promise<string> {
   printProviderMenu(runtime);
+  const numbered = availablePreferredProviders(runtime);
   const rl = readline.createInterface({ input, output });
   try {
     const answer = (await rl.question(`\nProvider [${fallback}] > `)).trim();
     if (!answer) return fallback;
     const numeric = Number(answer);
-    if (Number.isInteger(numeric) && numeric >= 1 && numeric <= preferredProviders.length) {
-      return preferredProviders[numeric - 1]!.id;
+    if (Number.isInteger(numeric) && numeric >= 1 && numeric <= numbered.length) {
+      return numbered[numeric - 1]!.id;
     }
     return answer;
   } finally {
@@ -106,18 +145,18 @@ function buildToolPolicy(config: RayaConfig): ToolExecutionPolicy {
   if (config.mode !== "build" || config.securityMode === "full") return {};
   return {
     confirmDangerousAction: async (action, details) => {
-      const approved = action === "run shell command" && config.autoApproveCommands.some((command) => details.startsWith(command));
+      const approved = action === "run shell command" && config.autoApproveCommands.some((command) => commandMatchesAutoApprovePrefix(details, command));
       if (!approved) await requestTerminalApproval(action, details);
     }
   };
 }
 
-function applyConfigToAgent(agent: Agent, config: RayaConfig, model?: Model<any>): void {
+function applyConfigToAgent(agent: Agent, config: RayaConfig, models: ReturnType<typeof createProviderRuntime>["models"], model?: Model<any>): void {
   if (model) {
     agent.state.model = model;
   }
   agent.state.thinkingLevel = config.thinkingLevel;
-  agent.state.tools = createDefaultTools(config, buildToolPolicy(config));
+  agent.state.tools = createRayaTools({ config, model: model ?? agent.state.model, models, toolPolicy: buildToolPolicy(config) });
 }
 
 function commandOptions<T extends Record<string, unknown>>(value: unknown): T {
@@ -168,6 +207,7 @@ async function configureTelegramOnFirstRun(config: RayaConfig, force = false): P
     const token = (await rl.question("Telegram bot token (optional; press Enter to skip) > ")).trim();
     if (!token) return config;
     const allowedChatId = (await rl.question("Telegram chat ID to allow (optional; press Enter to allow any chat) > ")).trim();
+    if (allowedChatId && !/^-?\d+$/.test(allowedChatId)) throw new Error("Telegram chat ID must be an integer.");
     writeSecret("RAYA_TELEGRAM_BOT_TOKEN", token);
     writeSecret("RAYA_TELEGRAM_ALLOWED_CHAT_ID", allowedChatId || undefined);
     return config;
@@ -189,7 +229,7 @@ async function runGateway(config: RayaConfig): Promise<void> {
     token,
     allowedChatId: readSecret("RAYA_TELEGRAM_ALLOWED_CHAT_ID"),
     onError: (error) => console.error(color(`Telegram: ${error.message}`, theme.red)),
-    onPrompt: async (prompt, toolPolicy) => {
+    onPrompt: async (prompt, toolPolicy, signal) => {
       let response = "";
       const agent = createRayaAgent({
         config: session.config,
@@ -201,15 +241,14 @@ async function runGateway(config: RayaConfig): Promise<void> {
         }
       });
       agent.state.messages = session.messages;
-      await agent.prompt(prompt);
-      await agent.waitForIdle();
+      await promptWithAbort(agent, prompt, signal);
       session.messages = agent.state.messages;
       saveSession(session);
       return response || lastAssistantText(agent);
     }
   });
   const chatId=readSecret("RAYA_TELEGRAM_ALLOWED_CHAT_ID");
-  const stopScheduled=startScheduler((task)=>{if(chatId)void gateway.sendMessage(chatId,`Reminder: ${task.message}`);else console.log(`Reminder: ${task.message}`);});
+  const stopScheduled=startScheduler(async (task)=>{if(chatId)await gateway.sendMessage(chatId,`Reminder: ${task.message}`);else console.log(`Reminder: ${task.message}`);}, (error) => console.error(color(`Scheduler: ${error.message}`, theme.red)));
   console.log(color("Telegram gateway running. Press Ctrl+C to stop.", theme.cyan));
   await new Promise<void>((resolve) => process.once("SIGINT", resolve));
   stopScheduled();
@@ -272,7 +311,10 @@ program
     if(action==="list"){
       if(!config.piPackages.length){console.log("(none)");return;}
       for(const name of config.piPackages){
-        const manifestPath=join(RAYA_PLUGINS_DIR,"node_modules",name,"package.json");
+        let packageName: string;
+        try { packageName = normalizePiPackageName(name); }
+        catch { console.log(`${name}\tinvalid package name`); continue; }
+        const manifestPath=join(RAYA_PLUGINS_DIR,"node_modules",packageName,"package.json");
         if(!existsSync(manifestPath)){console.log(`${name}\tmissing`);continue;}
         const manifest=JSON.parse(readFileSync(manifestPath,"utf8")) as {pi?:{skills?:string[];extensions?:string[]}};
         const skills=manifest.pi?.skills?.length?`skills:${manifest.pi.skills.length}`:"skills:0";
@@ -282,8 +324,8 @@ program
       return;
     }
     if(action!=="install"||!packageArg)throw new Error("Usage: raya plugin install npm:<package>");
-    const packageName=packageArg.replace(/^npm:/,"");mkdirSync(RAYA_PLUGINS_DIR,{recursive:true,mode:0o700});
-    await new Promise<void>((resolve,reject)=>{const child=spawn("npm",["install","--prefix",RAYA_PLUGINS_DIR,packageName],{stdio:"inherit"});child.on("close",code=>code===0?resolve():reject(new Error(`npm exited ${code}`)));child.on("error",reject);});
+    const packageName=normalizePiPackageName(packageArg);mkdirSync(RAYA_PLUGINS_DIR,{recursive:true,mode:0o700});
+    await new Promise<void>((resolve,reject)=>{const child=spawn("npm",["install","--prefix",RAYA_PLUGINS_DIR,"--ignore-scripts","--no-audit","--no-fund","--",packageName],{stdio:"inherit"});child.on("close",code=>code===0?resolve():reject(new Error(`npm exited ${code}`)));child.on("error",reject);});
     saveConfig({...config,piPackages:[...new Set([...config.piPackages,packageName])]});
     console.log(`Installed ${packageName}. Skills are loaded on the next session. Native Pi extensions require a Raya adapter.`);
   });
@@ -380,12 +422,26 @@ program
   .action((rawOptions: unknown) => {
     const options = commandOptions<{ provider?: string; model?: string; mode?: string; thinking?: string; security?: string; design?: string; neovim?: string }>(rawOptions);
     const config = loadConfig();
+    if (options.mode !== undefined && options.mode !== "plan" && options.mode !== "build") throw new Error("--mode must be plan or build.");
+    if (options.thinking !== undefined && !["off", "minimal", "low", "medium", "high", "xhigh"].includes(options.thinking)) throw new Error("--thinking must be off, minimal, low, medium, high, or xhigh.");
+    if (options.security !== undefined && options.security !== "standard" && options.security !== "full") throw new Error("--security must be standard or full.");
     if (options.neovim !== undefined && options.neovim !== "true" && options.neovim !== "false") throw new Error("--neovim must be true or false.");
     if (options.design !== undefined && options.design !== "small" && options.design !== "large") throw new Error("--design must be small or large.");
+    let provider = config.provider;
+    let modelId = config.model;
+    if (options.provider !== undefined || options.model !== undefined) {
+      const runtime = createProviderRuntime();
+      provider = options.provider ?? config.provider;
+      getProvider(runtime, provider);
+      const fallbackModel = provider === config.provider ? config.model : runtime.models.getModels(provider)[0]?.id;
+      modelId = options.model ?? fallbackModel ?? "";
+      if (!modelId) throw new Error(`Provider has no known models: ${provider}`);
+      getConfiguredModel(runtime, provider, modelId);
+    }
     const next = {
       ...config,
-      provider: options.provider ?? config.provider,
-      model: options.model ?? config.model,
+      provider,
+      model: modelId,
       mode: (options.mode ?? config.mode) as typeof config.mode,
       thinkingLevel: (options.thinking ?? config.thinkingLevel) as typeof config.thinkingLevel,
       securityMode: (options.security ?? config.securityMode) as typeof config.securityMode,
@@ -438,6 +494,7 @@ program
       toolPolicy: buildToolPolicy(config)
     });
     agent.state.messages = session.messages;
+    const sessionLock = new AsyncLock();
 
     const rebuildAgent = (nextSession = session): Agent => {
       const nextModel = getConfiguredModel(runtime, nextSession.config.provider, nextSession.config.model);
@@ -560,7 +617,7 @@ program
           return;
         }
         config = { ...config, thinkingLevel: requested as RayaConfig["thinkingLevel"] };
-        applyConfigToAgent(activeAgent, config);
+        applyConfigToAgent(activeAgent, config, runtime.models, model);
         persist(activeAgent);
         return;
       }
@@ -572,7 +629,7 @@ program
           return;
         }
         config = { ...config, securityMode };
-        applyConfigToAgent(activeAgent, config);
+        applyConfigToAgent(activeAgent, config, runtime.models, model);
         persist(activeAgent);
         console.log(color(`Security: ${securityMode === "full" ? "Full access" : "Standard"}`, theme.green));
         return;
@@ -653,29 +710,28 @@ program
       token: telegramToken,
       allowedChatId: readSecret("RAYA_TELEGRAM_ALLOWED_CHAT_ID"),
       onError: (error) => notifyTui(`Telegram unavailable: ${error.message}`),
-      onPrompt: async (remotePrompt, toolPolicy) => {
-        let streamed = "";
-        const remoteAgent = createRayaAgent({
-          config,
-          model,
-          models: runtime.models,
-          toolPolicy,
-          onEvent: (event) => {
-            if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
-              streamed += event.assistantMessageEvent.delta;
+      onPrompt: async (remotePrompt, toolPolicy, signal) => sessionLock.run(async () => {
+          let streamed = "";
+          const remoteAgent = createRayaAgent({
+            config,
+            model,
+            models: runtime.models,
+            toolPolicy,
+            onEvent: (event) => {
+              if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
+                streamed += event.assistantMessageEvent.delta;
+              }
             }
-          }
-        });
-        remoteAgent.state.messages = session.messages;
-        await remoteAgent.prompt(remotePrompt);
-        await remoteAgent.waitForIdle();
-        persist(remoteAgent);
-        return streamed || lastAssistantText(remoteAgent);
-      }
+          });
+          remoteAgent.state.messages = session.messages;
+          await promptWithAbort(remoteAgent, remotePrompt, signal);
+          persist(remoteAgent);
+          return streamed || lastAssistantText(remoteAgent);
+        })
     }) : undefined;
 
     if (telegram) console.log(color("Telegram listener started for this Raya session.", theme.cyan));
-    const stopScheduler = startScheduler((task) => notifyTui(`Reminder: ${task.message}`));
+    const stopScheduler = startScheduler((task) => notifyTui(`Reminder: ${task.message}`), (error) => notifyTui(`Scheduler error: ${error.message}`));
     let signalExitStarted = false;
     const exitImmediately = (): void => {
       if (signalExitStarted) return;
@@ -698,14 +754,15 @@ program
         contextTokens: 0,
         contextWindow: model.contextWindow
       }, {
-        onCommand: ({ agent: activeAgent, command }) => handleCommand(activeAgent, command),
+        onCommand: ({ agent: activeAgent, command }) => sessionLock.run(() => handleCommand(activeAgent, command)),
+        onBeforePrompt: () => sessionLock.acquire(),
         onAfterPrompt: (activeAgent) => persist(activeAgent),
-        onToggleMode: (activeAgent) => {
+        onToggleMode: (activeAgent) => sessionLock.run(() => {
           config = { ...config, mode: config.mode === "plan" ? "build" : "plan" };
-          applyConfigToAgent(activeAgent, config);
+          applyConfigToAgent(activeAgent, config, runtime.models, model);
           persist(activeAgent);
           return { mode: config.mode === "plan" ? "Plan" : "Build" };
-        },
+        }),
         sessionSuggestions: () => listSessions().map((item) => ({
           id: item.id,
           name: item.name,

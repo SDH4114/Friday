@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { ensureRayaHome, RAYA_MEMORY_PATH, RAYA_USER_MEMORY_PATH } from "../config/paths.js";
+import { writePrivateFileAtomic } from "../storage/atomic-file.js";
 
 const LIMITS = { memory: 2200, user: 1375 } as const;
 export type MemoryTarget = keyof typeof LIMITS;
@@ -20,5 +21,5 @@ export function mutateMemory(action: "add"|"replace"|"remove", target: MemoryTar
   if (action === "add") { if (!entries.includes(content!)) entries.push(content!); }
   else { const matches = entries.map((e,i)=>e.includes(oldText!)?i:-1).filter(i=>i>=0); if (matches.length !== 1) throw new Error(`old_text must match exactly one entry; matched ${matches.length}`); action === "remove" ? entries.splice(matches[0]!,1) : entries.splice(matches[0]!,1,content!); }
   current = entries.filter(Boolean).join("\n§\n"); if (current.length > LIMITS[target]) throw new Error(`Memory limit exceeded: ${current.length}/${LIMITS[target]}`);
-  writeFileSync(pathFor(target), `${current}\n`, { mode: 0o600 }); return `${target}: ${current.length}/${LIMITS[target]}`;
+  writePrivateFileAtomic(pathFor(target), `${current}\n`); return `${target}: ${current.length}/${LIMITS[target]}`;
 }

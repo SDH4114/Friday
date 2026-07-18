@@ -18,26 +18,50 @@ type ShellDetails = {
   aborted: boolean;
 };
 
-function truncate(value: string, maxChars: number): string {
-  if (value.length <= maxChars) {
-    return value;
-  }
+const MAX_OUTPUT_CHARS = 20_000;
+const SHELL_CONTROL = /[|;&><`]|\$\(|\n/;
 
-  return `${value.slice(0, maxChars)}\n\n[truncated ${value.length - maxChars} chars]`;
+function appendBounded(current: string, chunk: Buffer, omitted: number): { value: string; omitted: number } {
+  const text = chunk.toString("utf8");
+  const room = Math.max(MAX_OUTPUT_CHARS - current.length, 0);
+  return {
+    value: room ? current + text.slice(0, room) : current,
+    omitted: omitted + Math.max(text.length - room, 0)
+  };
+}
+
+function finishBounded(value: string, omitted: number): string {
+  return omitted ? `${value}\n\n[truncated ${omitted} chars]` : value;
 }
 
 function assertPlanSafe(command: string): void {
-  if (/[|;&><`]|\$\(|\n/.test(command)) {
+  if (SHELL_CONTROL.test(command)) {
     throw new Error("Plan mode only permits simple read-only shell commands.");
   }
   const [program, ...args] = command.trim().split(/\s+/);
   const allowed = new Set(["pwd", "ls", "find", "rg", "grep", "cat", "head", "tail", "wc", "stat", "du", "git"]);
   if (!program || !allowed.has(program)) throw new Error("Plan mode only permits read-only inspection commands.");
-  if (program === "find" && args.some((arg) => ["-exec", "-execdir", "-delete", "-fprint", "-fprint0"].includes(arg))) {
+  if (program === "find" && args.some((arg) => ["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls"].includes(arg))) {
     throw new Error("Plan mode does not permit mutating find actions.");
   }
-  if (program === "git" && !["status", "diff", "log", "show", "branch", "remote"].includes(args[0] ?? "")) {
-    throw new Error("Plan mode only permits read-only git commands.");
+  if (program === "git") {
+    const [subcommand, ...gitArgs] = args;
+    if (!["status", "diff", "log", "show", "branch", "remote"].includes(subcommand ?? "")) {
+      throw new Error("Plan mode only permits read-only git commands.");
+    }
+    if (gitArgs.some((arg) => arg === "-o" || arg === "--output" || arg.startsWith("--output="))) {
+      throw new Error("Plan mode does not permit git output files.");
+    }
+    if (subcommand === "branch" && gitArgs.some((arg) => !arg.startsWith("-") || ["-d", "-D", "-m", "-M", "-c", "-C", "--delete", "--move", "--copy", "--edit-description", "--set-upstream-to", "--unset-upstream"].includes(arg))) {
+      throw new Error("Plan mode only permits listing git branches.");
+    }
+    if (subcommand === "remote") {
+      const readOnly = gitArgs.length === 0
+        || (gitArgs.length === 1 && ["-v", "--verbose"].includes(gitArgs[0]!))
+        || (gitArgs[0] === "show" && gitArgs.slice(1).every((arg) => !arg.startsWith("-") || arg === "-n"))
+        || (gitArgs[0] === "get-url" && gitArgs.slice(1).every((arg) => !arg.startsWith("-") || ["--all", "--push"].includes(arg)));
+      if (!readOnly) throw new Error("Plan mode only permits inspecting git remotes.");
+    }
   }
 }
 
@@ -57,9 +81,45 @@ function assertAllowedInMode(command: string, mode: RayaConfig["mode"]): void {
   assertPlanSafe(command);
 }
 
-function assertNotBlocked(command: string, blockedCommands: string[]): void {
-  const normalized = command.trim();
-  const blocked = blockedCommands.find((entry) => normalized === entry || normalized.startsWith(`${entry} `));
+function shellSegments(command: string): string[] {
+  return command
+    .replaceAll("`", ";")
+    .split(/(?:&&|\|\||[;&|()\n])/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+}
+
+function stripExecutionPrefixes(segment: string): string {
+  let value = segment.trim();
+  value = value.replace(/^(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)+/, "");
+  value = value.replace(/^(?:(?:sudo|command|builtin|nohup)\s+)+/, "");
+  if (value.startsWith("env ")) {
+    value = value.slice(4).replace(/^(?:(?:-[A-Za-z]+|[A-Za-z_][A-Za-z0-9_]*=\S+)\s+)*/, "");
+  }
+  return value;
+}
+
+function matchesCommandPrefix(command: string, prefix: string): boolean {
+  const raw = command.trim();
+  const [program = "", ...args] = raw.split(/\s+/);
+  const normalized = [program.split("/").at(-1) ?? program, ...args].join(" ");
+  const candidate = prefix.trim();
+  return Boolean(candidate) && (raw === candidate || raw.startsWith(`${candidate} `) || normalized === candidate || normalized.startsWith(`${candidate} `));
+}
+
+export function commandMatchesAutoApprovePrefix(command: string, prefix: string): boolean {
+  return !SHELL_CONTROL.test(command) && matchesCommandPrefix(command, prefix);
+}
+
+export function assertNotBlocked(command: string, blockedCommands: string[]): void {
+  const segments = shellSegments(command);
+  const blocked = blockedCommands.find((entry) => segments.some((segment) => {
+    const executable = stripExecutionPrefixes(segment);
+    if (matchesCommandPrefix(executable, entry)) return true;
+    const execTarget = executable.match(/(?:^|\s)-(?:exec|execdir|ok|okdir)\s+([^\s]+)/)?.[1];
+    const xargsTarget = executable.match(/(?:^|\s)xargs(?:\s+-\S+)*\s+([^\s]+)/)?.[1];
+    return matchesCommandPrefix(execTarget ?? "", entry) || matchesCommandPrefix(xargsTarget ?? "", entry);
+  }));
   if (blocked) throw new Error(`This command is blocked by Raya configuration: ${blocked}`);
 }
 
@@ -79,11 +139,14 @@ export function createShellTool(config: RayaConfig, policy: ToolExecutionPolicy 
         const child = spawn(params.command, {
           cwd: process.cwd(),
           shell: process.env.SHELL ?? "/bin/sh",
-          stdio: ["ignore", "pipe", "pipe"]
+          stdio: ["ignore", "pipe", "pipe"],
+          detached: true
         });
 
         let stdout = "";
         let stderr = "";
+        let stdoutOmitted = 0;
+        let stderrOmitted = 0;
         let timedOut = false;
         let aborted = false;
         let terminating = false;
@@ -92,8 +155,13 @@ export function createShellTool(config: RayaConfig, policy: ToolExecutionPolicy 
         const terminate = (): void => {
           if (terminating) return;
           terminating = true;
-          child.kill("SIGTERM");
-          forceKill = setTimeout(() => child.kill("SIGKILL"), 2_000);
+          const kill = (signal: NodeJS.Signals): void => {
+            if (!child.pid) return;
+            try { process.kill(-child.pid, signal); }
+            catch { child.kill(signal); }
+          };
+          kill("SIGTERM");
+          forceKill = setTimeout(() => kill("SIGKILL"), 2_000);
           forceKill.unref();
         };
 
@@ -111,11 +179,15 @@ export function createShellTool(config: RayaConfig, policy: ToolExecutionPolicy 
         else signal?.addEventListener("abort", abort, { once: true });
 
         child.stdout.on("data", (chunk: Buffer) => {
-          stdout += chunk.toString("utf8");
+          const next = appendBounded(stdout, chunk, stdoutOmitted);
+          stdout = next.value;
+          stdoutOmitted = next.omitted;
         });
 
         child.stderr.on("data", (chunk: Buffer) => {
-          stderr += chunk.toString("utf8");
+          const next = appendBounded(stderr, chunk, stderrOmitted);
+          stderr = next.value;
+          stderrOmitted = next.omitted;
         });
 
         child.once("error", (error) => {
@@ -132,8 +204,8 @@ export function createShellTool(config: RayaConfig, policy: ToolExecutionPolicy 
           resolve({
             command: params.command,
             exitCode,
-            stdout: truncate(stdout, 20_000),
-            stderr: truncate(stderr, 20_000),
+            stdout: finishBounded(stdout, stdoutOmitted),
+            stderr: finishBounded(stderr, stderrOmitted),
             timedOut,
             aborted
           });

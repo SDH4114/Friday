@@ -1,4 +1,6 @@
 import { Type } from "@earendil-works/pi-ai";
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
 import type { RayaConfig } from "../config/config.js";
 import type { RayaTool } from "../types/tool.js";
 
@@ -18,6 +20,58 @@ type WebDetails = {
   mode: "search" | "fetch";
   results: WebResult[];
 };
+
+const MAX_HTTP_BODY_CHARS = 1_000_000;
+const MAX_REDIRECTS = 5;
+
+export function isPrivateIpAddress(address: string): boolean {
+  if (isIP(address) === 4) {
+    const [a, b] = address.split(".").map(Number);
+    return a === 0 || a === 10 || a === 127 || a! >= 224
+      || (a === 100 && b! >= 64 && b! <= 127)
+      || (a === 169 && b === 254)
+      || (a === 172 && b! >= 16 && b! <= 31)
+      || (a === 192 && b === 168)
+      || (a === 198 && (b === 18 || b === 19));
+  }
+  if (isIP(address) === 6) {
+    const normalized = address.toLowerCase();
+    if (normalized.startsWith("::ffff:")) return isPrivateIpAddress(normalized.slice(7));
+    return normalized === "::" || normalized === "::1" || normalized.startsWith("fc") || normalized.startsWith("fd")
+      || /^fe[89ab]/.test(normalized) || normalized.startsWith("ff");
+  }
+  return true;
+}
+
+async function assertPublicUrl(url: URL): Promise<void> {
+  const hostname = url.hostname.toLowerCase().replace(/\.$/, "");
+  if (!hostname || hostname === "localhost" || hostname.endsWith(".localhost") || hostname.endsWith(".local")
+    || hostname.endsWith(".internal") || hostname.endsWith(".lan") || (!hostname.includes(".") && isIP(hostname) === 0)) {
+    throw new Error("Web requests to local or private hosts are not allowed.");
+  }
+  const addresses = isIP(hostname) ? [{ address: hostname }] : await lookup(hostname, { all: true, verbatim: true });
+  if (!addresses.length || addresses.some((item) => isPrivateIpAddress(item.address))) {
+    throw new Error("Web requests to local or private addresses are not allowed.");
+  }
+}
+
+async function readResponseBody(response: Response, maxChars: number): Promise<string> {
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let value = "";
+  try {
+    while (value.length < maxChars) {
+      const { done, value: chunk } = await reader.read();
+      if (done) break;
+      value += decoder.decode(chunk, { stream: true });
+    }
+    value += decoder.decode();
+    return value.slice(0, maxChars);
+  } finally {
+    if (value.length >= maxChars) await reader.cancel().catch(() => undefined);
+  }
+}
 
 function stripHtml(html: string): string {
   return html
@@ -92,25 +146,33 @@ async function searchWeb(query: string, timeoutMs: number, signal?: AbortSignal)
   throw new Error(`Web search failed: ${errors.join("; ")}`);
 }
 
-async function fetchText(url: string, timeoutMs: number, signal?: AbortSignal): Promise<string> {
+async function fetchText(url: string, timeoutMs: number, signal?: AbortSignal, maxChars = MAX_HTTP_BODY_CHARS): Promise<string> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   const abort = () => controller.abort();
   signal?.addEventListener("abort", abort, { once: true });
 
   try {
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        "user-agent": "Raya/0.1 (+https://github.com/SDH4114/Friday)"
+    let current = new URL(url);
+    for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects += 1) {
+      await assertPublicUrl(current);
+      const response = await fetch(current, {
+        signal: controller.signal,
+        redirect: "manual",
+        headers: {
+          "user-agent": "Raya/0.2 (+https://github.com/SDH4114/Raya-APPLE)"
+        }
+      });
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get("location");
+        if (!location) throw new Error(`HTTP ${response.status} redirect without location`);
+        current = new URL(location, current);
+        continue;
       }
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status} ${response.statusText}`);
+      if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`);
+      return readResponseBody(response, maxChars);
     }
-
-    return await response.text();
+    throw new Error(`Too many redirects (maximum ${MAX_REDIRECTS}).`);
   } finally {
     clearTimeout(timeout);
     signal?.removeEventListener("abort", abort);
@@ -133,7 +195,7 @@ export function createWebTool(config: RayaConfig): RayaTool<typeof WebParameters
         const url = new URL(params.url);
         if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("Only http and https URLs are supported.");
         if (url.username || url.password) throw new Error("URLs containing credentials are not supported.");
-        const html = await fetchText(url.toString(), config.webTimeoutMs, signal);
+        const html = await fetchText(url.toString(), config.webTimeoutMs, signal, Math.min(MAX_HTTP_BODY_CHARS, config.webMaxChars * 8));
         const content = stripHtml(html).slice(0, config.webMaxChars);
         const details: WebDetails = {
           mode: "fetch",

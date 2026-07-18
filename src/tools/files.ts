@@ -1,5 +1,5 @@
 import { Type } from "@earendil-works/pi-ai";
-import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, lstatSync, openSync, readSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { mkdirSync } from "node:fs";
 import type { RayaTool, ToolExecutionPolicy } from "../types/tool.js";
@@ -17,6 +17,22 @@ const ListFilesParameters = Type.Object({
   path: Type.Optional(Type.String({ description: "Workspace-relative directory path. Defaults to current directory." })),
   maxEntries: Type.Optional(Type.Number({ description: "Maximum number of entries. Defaults to 200." }))
 });
+
+const MAX_READ_BYTES = 128 * 1024;
+
+function readTextBounded(path: string): string {
+  const descriptor = openSync(path, "r");
+  try {
+    const size = fstatSync(descriptor).size;
+    const length = Math.min(size, MAX_READ_BYTES);
+    const buffer = Buffer.alloc(length);
+    const bytesRead = readSync(descriptor, buffer, 0, length, 0);
+    const text = buffer.subarray(0, bytesRead).toString("utf8");
+    return size > bytesRead ? `${text}\n\n[truncated ${size - bytesRead} bytes]` : text;
+  } finally {
+    closeSync(descriptor);
+  }
+}
 
 function isInside(root: string, path: string): boolean {
   return path === root || path.startsWith(`${root}/`);
@@ -55,7 +71,7 @@ export function createReadFileTool(): RayaTool<typeof ReadFileParameters, { path
     parameters: ReadFileParameters,
     async execute(_toolCallId, params) {
       const path = workspacePath(params.path);
-      const text = readFileSync(path, "utf8");
+      const text = readTextBounded(path);
       return {
         content: [{ type: "text", text: `path: ${displayPath(path)}\n\n${text}` }],
         details: { path: displayPath(path) }

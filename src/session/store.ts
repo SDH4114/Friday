@@ -1,9 +1,11 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { z } from "zod";
 import { ensureRayaHome, RAYA_MEMORY_DIR, RAYA_SESSIONS_PATH } from "../config/paths.js";
 import { normalizeConfig, type RayaConfig } from "../config/config.js";
 import { memorySkillHook } from "../memory/skill.js";
+import { writePrivateFileAtomic } from "../storage/atomic-file.js";
 
 export type RayaSession = {
   id: string;
@@ -20,22 +22,41 @@ type SessionFile = {
   sessions: RayaSession[];
 };
 
+const StoredSessionSchema = z.object({
+  id: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
+  name: z.string().min(1).max(500),
+  createdAt: z.number().finite(),
+  updatedAt: z.number().finite(),
+  config: z.unknown(),
+  messages: z.array(z.unknown()),
+  autoNamed: z.boolean().optional()
+});
+
+const SessionFileSchema = z.object({
+  activeSessionId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).optional(),
+  sessions: z.array(StoredSessionSchema)
+});
+
 function readSessionFile(): SessionFile {
   ensureRayaHome();
   if (!existsSync(RAYA_SESSIONS_PATH)) {
     return { sessions: [] };
   }
-  const file = JSON.parse(readFileSync(RAYA_SESSIONS_PATH, "utf8")) as SessionFile;
-  for (const session of file.sessions) {
-    session.config = normalizeConfig(session.config);
-    if (session.autoNamed === undefined) session.autoNamed = true;
-  }
-  return file;
+  const parsed = SessionFileSchema.parse(JSON.parse(readFileSync(RAYA_SESSIONS_PATH, "utf8")));
+  return {
+    ...(parsed.activeSessionId ? { activeSessionId: parsed.activeSessionId } : {}),
+    sessions: parsed.sessions.map((session) => ({
+      ...session,
+      config: normalizeConfig(session.config),
+      messages: session.messages as AgentMessage[],
+      autoNamed: session.autoNamed ?? true
+    }))
+  };
 }
 
 function writeSessionFile(file: SessionFile): void {
   ensureRayaHome();
-  writeFileSync(RAYA_SESSIONS_PATH, `${JSON.stringify(file, null, 2)}\n`, { mode: 0o600 });
+  writePrivateFileAtomic(RAYA_SESSIONS_PATH, `${JSON.stringify(file, null, 2)}\n`);
 }
 
 function markdownTranscript(session: RayaSession): string {
@@ -48,7 +69,7 @@ function persistReadableTranscript(session: RayaSession): void {
   const day = new Date(session.updatedAt).toISOString().slice(0, 10);
   const directory = `${RAYA_MEMORY_DIR}/sessions/${day}`;
   mkdirSync(directory, { recursive: true, mode: 0o700 });
-  writeFileSync(`${directory}/${session.id}.md`, markdownTranscript(session), { mode: 0o600 });
+  writePrivateFileAtomic(`${directory}/${session.id}.md`, markdownTranscript(session));
   void memorySkillHook?.onSessionSaved(session);
 }
 

@@ -4,6 +4,7 @@ import { readSecret, writeSecret } from "../config/secrets.js";
 import { RAYA_AUTH_PATH } from "../config/paths.js";
 
 type AuthFile = Record<string, Credential>;
+let credentialQueue: Promise<unknown> = Promise.resolve();
 
 function readAuthFile(): AuthFile {
   const encoded = readSecret("RAYA_CREDENTIALS");
@@ -22,21 +23,25 @@ function writeAuthFile(auth: AuthFile): void {
 }
 
 export class FileCredentialStore implements CredentialStore {
-  private readonly locks = new Map<string, Promise<Credential | undefined>>();
-
+  // Credentials for every provider share one file, so per-provider locks can
+  // overwrite each other's read-modify-write updates. Serialize the file.
   constructor() {}
 
+  private enqueue<T>(operation: () => Promise<T> | T): Promise<T> {
+    const result = credentialQueue.catch(() => undefined).then(operation);
+    credentialQueue = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
   async read(providerId: string): Promise<Credential | undefined> {
-    return readAuthFile()[providerId];
+    return this.enqueue(() => readAuthFile()[providerId]);
   }
 
   async modify(
     providerId: string,
     fn: (current: Credential | undefined) => Promise<Credential | undefined>
   ): Promise<Credential | undefined> {
-    const previous = this.locks.get(providerId) ?? Promise.resolve(undefined);
-
-    const next = previous.catch(() => undefined).then(async () => {
+    return this.enqueue(async () => {
       const auth = readAuthFile();
       const updated = await fn(auth[providerId]);
 
@@ -47,21 +52,13 @@ export class FileCredentialStore implements CredentialStore {
 
       return auth[providerId];
     });
-
-    this.locks.set(providerId, next);
-
-    try {
-      return await next;
-    } finally {
-      if (this.locks.get(providerId) === next) {
-        this.locks.delete(providerId);
-      }
-    }
   }
 
   async delete(providerId: string): Promise<void> {
-    const auth = readAuthFile();
-    delete auth[providerId];
-    writeAuthFile(auth);
+    await this.enqueue(() => {
+      const auth = readAuthFile();
+      delete auth[providerId];
+      writeAuthFile(auth);
+    });
   }
 }

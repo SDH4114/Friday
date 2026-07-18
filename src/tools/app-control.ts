@@ -1,5 +1,5 @@
 import { Type } from "@earendil-works/pi-ai";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { platform } from "node:os";
 import { promisify } from "node:util";
 import type { RayaTool, ToolExecutionPolicy } from "../types/tool.js";
@@ -18,15 +18,18 @@ export function createAppControlTool(policy: ToolExecutionPolicy = {}): RayaTool
     parameters: AppParameters,
     executionMode: "sequential",
     async execute(_id, params) {
+      if (!params.target.trim() || params.target.startsWith("-")) throw new Error("Application target must be a non-empty name.");
       await policy.confirmDangerousAction?.(`${params.action} application`, params.target);
       const isMac = platform() === "darwin";
       if (params.action === "open") {
         if (isMac) await execFileAsync("open", ["-a", params.target]);
-        else await execFileAsync("xdg-open", [params.target]);
-      } else if (isMac) {
-        await execFileAsync("osascript", ["-e", `tell application \"${params.target.replaceAll('"', '\\"')}\" to quit`]);
+        else await new Promise<void>((resolve, reject) => {
+          const child = spawn(params.target, [], { detached: true, stdio: "ignore" });
+          child.once("error", reject);
+          child.once("spawn", () => { child.unref(); resolve(); });
+        });
       } else {
-        await execFileAsync("pkill", ["-f", params.target]);
+        await execFileAsync("pkill", ["-x", params.target]);
       }
       const details = { action: params.action, target: params.target };
       return { content: [{ type: "text", text: `${params.action} requested for ${params.target}` }], details };

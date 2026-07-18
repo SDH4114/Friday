@@ -62,6 +62,10 @@ Useful interactive commands:
 /thinking
 /security
 /sessions
+/About
+/clear
+/exit
+```
 
 Direct shortcuts:
 
@@ -72,17 +76,13 @@ raya serach <text>          Alias for raya search (kept for convenience)
 raya git                    git add ., ask for a commit name, commit, then push
 raya open <application>     Open an application
 ```
-/About
-/clear
-/exit
-```
 
 ## Tools
 
 All tools implement the same `RayaTool` contract (`name`, `description`, JSON schema, `execute()`), so more tools can later be added without changing the agent core.
 
 - `shell` — executes commands in the workspace.
-- `web` — DuckDuckGo text search and URL fetch.
+- `web` — DuckDuckGo text search and public URL fetch; local/private network addresses are blocked.
 - `list_files`, `read_file`, `write_file` — workspace filesystem access. Writing is available in Build mode.
 - `app_control` — opens applications and closes named apps/processes on macOS/Linux.
 
@@ -120,7 +120,7 @@ To bypass Build-mode approval for trusted shell command prefixes, or to prohibit
 }
 ```
 
-Blocked commands are rejected before Raya invokes the shell, in either mode. The `/thinking` picker only shows effort levels the active provider/model reports as supported.
+Blocked commands are checked before Raya invokes the shell, including common wrappers and command chains, in either mode. This deny-list is defense in depth rather than a complete shell sandbox. The `/thinking` picker only shows effort levels the active provider/model reports as supported.
 
 ## Skills
 
@@ -139,7 +139,7 @@ raya plugin install npm:pi-subagents
 raya plugin list
 ```
 
-Skills shipped inside installed pi packages are loaded on the next session. Native Pi CLI extensions use a different host API; they require a Raya adapter and are not executed blindly as arbitrary npm code.
+Skills shipped inside installed pi packages are loaded on the next session. Package install scripts are disabled. Native Pi CLI extensions use a different host API; they require a Raya adapter and are not executed blindly as arbitrary npm code.
 
 ## Persistent memory and scheduling
 
@@ -147,7 +147,7 @@ Raya injects bounded frozen snapshots from `~/.raya/USER.md` (1,375 chars) and `
 
 The `schedule` tool stores one-time and daily tasks in `~/.raya/scheduled.json`. Due tasks are delivered while the Raya TUI or Telegram gateway is running; restarting Raya reloads pending tasks from disk.
 
-Security can be selected interactively with `/security`, or configured as the default with `raya config --security standard|full`. Standard asks for consequential Build actions. Full skips approval prompts, while `blockedCommands` remains an absolute deny-list.
+Security can be selected interactively with `/security`, or configured as the default with `raya config --security standard|full`. Standard asks for consequential Build actions. Full skips approval prompts, while `blockedCommands` remains active as a defense-in-depth check.
 
 ## Telegram
 

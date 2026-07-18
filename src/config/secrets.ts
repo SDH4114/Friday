@@ -1,5 +1,6 @@
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { RAYA_ENV_PATH, ensureRayaHome } from "./paths.js";
+import { writePrivateFileAtomic } from "../storage/atomic-file.js";
 
 function readEnv(): Record<string, string> {
   ensureRayaHome();
@@ -13,9 +14,7 @@ function readEnv(): Record<string, string> {
 function writeEnv(values: Record<string, string>): void {
   ensureRayaHome();
   const body = Object.entries(values).map(([key, value]) => `${key}=${value}`).join("\n");
-  const temporary = `${RAYA_ENV_PATH}.${process.pid}.tmp`;
-  writeFileSync(temporary, `${body}\n`, { mode: 0o600 });
-  renameSync(temporary, RAYA_ENV_PATH);
+  writePrivateFileAtomic(RAYA_ENV_PATH, `${body}\n`);
 }
 
 export function readSecret(name: string): string | undefined {

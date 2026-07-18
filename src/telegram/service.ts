@@ -29,9 +29,10 @@ export function splitTelegramMessage(text: string, maxChars = 4_000): string[] {
 export function startTelegramService(input: {
   token: string;
   allowedChatId?: string;
-  onPrompt: (text: string, policy: ToolExecutionPolicy) => Promise<string>;
+  onPrompt: (text: string, policy: ToolExecutionPolicy, signal: AbortSignal) => Promise<string>;
   onError?: (error: Error) => void;
 }): TelegramService {
+  if (input.allowedChatId && !/^-?\d+$/.test(input.allowedChatId)) throw new Error("Telegram allowed chat ID must be an integer.");
   let running = true;
   let offset = 0;
   let work = Promise.resolve();
@@ -40,12 +41,16 @@ export function startTelegramService(input: {
   let lastReportedAt = 0;
   let pollAbort: AbortController | undefined;
   let retryWake: (() => void) | undefined;
+  const serviceAbort = new AbortController();
   const pending = new Map<string, PendingApproval>();
   const api = `https://api.telegram.org/bot${input.token}`;
 
   async function call<T>(method: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
-    const response = await fetch(`${api}/${method}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal });
-    const json = await response.json() as TelegramResponse<T> & { description?: string };
+    const requestSignal = AbortSignal.any([serviceAbort.signal, ...(signal ? [signal] : []), AbortSignal.timeout(35_000)]);
+    const response = await fetch(`${api}/${method}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: requestSignal });
+    const json = await response.json().catch(() => undefined) as (TelegramResponse<T> & { description?: string }) | undefined;
+    if (!response.ok) throw new Error(`Telegram ${method}: HTTP ${response.status}${json?.description ? ` ${json.description}` : ""}`);
+    if (!json) throw new Error(`Telegram ${method}: invalid JSON response`);
     if (!json.ok) throw new Error(`Telegram ${method}: ${json.description ?? "request failed"}`);
     return json.result;
   }
@@ -92,9 +97,11 @@ export function startTelegramService(input: {
     if (callback?.data?.startsWith("raya:")) {
       const [, decision, id] = callback.data.split(":");
       const item = pending.get(id);
-      if (item && callback.message?.chat.id === item.chatId) {
+      if (item && callback.message?.chat.id === item.chatId && (decision === "approve" || decision === "deny")) {
         clearTimeout(item.timer); pending.delete(id); item.resolve(decision === "approve");
         await call("answerCallbackQuery", { callback_query_id: callback.id, text: decision === "approve" ? "Approved" : "Denied" });
+      } else {
+        await call("answerCallbackQuery", { callback_query_id: callback.id, text: "This approval is no longer valid." });
       }
       return;
     }
@@ -105,14 +112,17 @@ export function startTelegramService(input: {
       return;
     }
     work = work.then(async () => {
+      if (serviceAbort.signal.aborted) return;
       const stopTyping = startTyping(message.chat.id);
       try {
-        const answer = await input.onPrompt(message.text!, approvalPolicy(message.chat.id));
+        const answer = await input.onPrompt(message.text!, approvalPolicy(message.chat.id), serviceAbort.signal);
+        if (serviceAbort.signal.aborted) return;
         await send(message.chat.id, answer || "Completed.");
       } finally {
         stopTyping();
       }
     }).catch(async (error: unknown) => {
+      if (!running || serviceAbort.signal.aborted) return;
       const messageText = error instanceof Error ? error.message : String(error);
       input.onError?.(error instanceof Error ? error : new Error(messageText));
       try { await send(message!.chat.id, `Raya error: ${messageText}`); } catch { /* network error is reported by polling loop */ }
@@ -146,5 +156,22 @@ export function startTelegramService(input: {
     }
   })();
 
-  return { async stop() { running = false; pollAbort?.abort(); retryWake?.(); for (const item of pending.values()) { clearTimeout(item.timer); item.resolve(false); } pending.clear(); await loop; }, async sendMessage(chatId,text){await send(Number(chatId),text);} };
+  return {
+    async stop() {
+      if (!running) return;
+      running = false;
+      serviceAbort.abort();
+      pollAbort?.abort();
+      retryWake?.();
+      for (const item of pending.values()) { clearTimeout(item.timer); item.resolve(false); }
+      pending.clear();
+      await loop;
+      await work;
+    },
+    async sendMessage(chatId, text) {
+      const numericChatId = Number(chatId);
+      if (!Number.isSafeInteger(numericChatId)) throw new Error(`Invalid Telegram chat ID: ${chatId}`);
+      await send(numericChatId, text);
+    }
+  };
 }

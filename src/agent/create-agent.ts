@@ -6,6 +6,18 @@ import type { ToolExecutionPolicy } from "../types/tool.js";
 import { createSystemPrompt } from "./system-prompt.js";
 import { createSubagentTool } from "../tools/subagent.js";
 
+export function createRayaTools(input: {
+  config: RayaConfig;
+  model: Model<any>;
+  models: Models;
+  toolPolicy?: ToolExecutionPolicy;
+}) {
+  return [
+    ...createDefaultTools(input.config, input.toolPolicy),
+    createSubagentTool(input.config, input.model, input.models, input.toolPolicy)
+  ];
+}
+
 export function createRayaAgent(input: {
   config: RayaConfig;
   model: Model<any>;
@@ -18,7 +30,7 @@ export function createRayaAgent(input: {
       systemPrompt: createSystemPrompt(),
       model: input.model,
       thinkingLevel: input.config.thinkingLevel,
-      tools: [...createDefaultTools(input.config, input.toolPolicy), createSubagentTool(input.config,input.model,input.models,input.toolPolicy)],
+      tools: createRayaTools(input),
       messages: []
     },
     streamFn: (model, context, options) => input.models.streamSimple(model, context, options),

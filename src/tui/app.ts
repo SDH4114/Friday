@@ -568,14 +568,21 @@ async function runAgentPromptWithEscape(agent: Agent, message: string): Promise<
     agent.abort();
     output.write(`\n${color("Cancelled.", theme.gray)}\n`);
   };
+  const exit = (): void => {
+    if (!cancelled) {
+      cancelled = true;
+      agent.abort();
+    }
+    process.kill(process.pid, "SIGINT");
+  };
   const onData = (data: Buffer | string): void => {
     const bytes = Buffer.isBuffer(data) ? data : Buffer.from(data);
     if (bytes.length === 1 && bytes[0] === 0x1b) cancel();
-    if (bytes.length === 1 && bytes[0] === 0x03) process.kill(process.pid, "SIGINT");
+    if (bytes.length === 1 && bytes[0] === 0x03) exit();
   };
   const onKeypress = (_text: string, key: { name?: string; ctrl?: boolean }): void => {
     if (key.name === "escape") cancel();
-    if (key.ctrl && key.name === "c") process.kill(process.pid, "SIGINT");
+    if (key.ctrl && key.name === "c") exit();
   };
 
   activeRawInputHandler = onData;
@@ -604,6 +611,7 @@ export async function runInteractiveTui(inputAgent: Agent, info: TuiSessionInfo,
   providerSuggestions?: (value: string) => TuiCommandSuggestion[];
   modelSuggestions?: (query: string) => TuiCommandSuggestion[];
   statusInfo?: () => TuiSessionInfo;
+  onBeforePrompt?: () => Promise<(() => void) | void> | (() => void) | void;
   neovimMode?: boolean;
   neovimConfig?: NeovimConfig;
   onToggleMode?: (agent: Agent) => Promise<{ agent?: Agent; mode: "Plan" | "Build" }> | { agent?: Agent; mode: "Plan" | "Build" };
@@ -689,15 +697,20 @@ export async function runInteractiveTui(inputAgent: Agent, info: TuiSessionInfo,
         continue;
       }
 
-      const messagesBeforePrompt = [...agent.state.messages];
-      if (promptHistory.at(-1) !== message) promptHistory.push(message);
-      const cancelled = await runAgentPromptWithEscape(agent, message);
-      if (cancelled) {
-        agent.state.messages = messagesBeforePrompt;
-        continue;
+      const releasePrompt = await options?.onBeforePrompt?.();
+      try {
+        const messagesBeforePrompt = [...agent.state.messages];
+        if (promptHistory.at(-1) !== message) promptHistory.push(message);
+        const cancelled = await runAgentPromptWithEscape(agent, message);
+        if (cancelled) {
+          agent.state.messages = messagesBeforePrompt;
+          continue;
+        }
+        await options?.onAfterPrompt?.(agent);
+        console.log();
+      } finally {
+        releasePrompt?.();
       }
-      await options?.onAfterPrompt?.(agent);
-      console.log();
     }
   } finally {
     input.off("data", routeRawInput);

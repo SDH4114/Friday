@@ -61,7 +61,7 @@ echo "Downloading Raya from $REPO_URL#$REPO_REF..."
 git clone --depth 1 --branch "$REPO_REF" "$REPO_URL" "$tmpdir/raya"
 
 cd "$tmpdir/raya"
-npm install
+npm ci
 npm run build
 npm install -g .
 

@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { RAYA_HOME, RAYA_PLUGINS_DIR } from "../config/paths.js";
 import { loadConfig } from "../config/config.js";
+import { normalizePiPackageName } from "../plugins/package.js";
 
 const MAX_SKILL_CHARS = 16_000;
 const MAX_TOTAL_CHARS = 64_000;
@@ -20,7 +21,11 @@ function skillFiles(root: string): string[] {
 }
 
 export function listAvailableSkills(): AvailableSkill[] {
-  const roots = [join(RAYA_HOME, "skills"), join(process.cwd(), ".agents", "skills"), ...loadConfig().piPackages.map((pkg)=>join(RAYA_PLUGINS_DIR,"node_modules",pkg,"skills"))];
+  const packageRoots = loadConfig().piPackages.flatMap((pkg) => {
+    try { return [join(RAYA_PLUGINS_DIR, "node_modules", normalizePiPackageName(pkg), "skills")]; }
+    catch { return []; }
+  });
+  const roots = [join(RAYA_HOME, "skills"), join(process.cwd(), ".agents", "skills"), ...packageRoots];
   const seen = new Set<string>();
   const skills: AvailableSkill[] = [];
   for (const root of roots) {

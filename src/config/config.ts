@@ -1,6 +1,7 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { z } from "zod";
 import { ensureRayaHome, RAYA_CONFIG_PATH } from "./paths.js";
+import { writePrivateFileAtomic } from "../storage/atomic-file.js";
 
 const ConfigSchema = z.object({
   provider: z.string().default("openai-codex"),
@@ -35,7 +36,7 @@ export function loadConfig(): RayaConfig {
   ensureRayaHome();
 
   if (!existsSync(RAYA_CONFIG_PATH)) {
-    return defaultConfig;
+    return ConfigSchema.parse(defaultConfig);
   }
 
   return normalizeConfig(JSON.parse(readFileSync(RAYA_CONFIG_PATH, "utf8")));
@@ -43,7 +44,5 @@ export function loadConfig(): RayaConfig {
 
 export function saveConfig(config: RayaConfig): void {
   ensureRayaHome();
-  writeFileSync(RAYA_CONFIG_PATH, `${JSON.stringify(ConfigSchema.parse(config), null, 2)}\n`, {
-    mode: 0o600
-  });
+  writePrivateFileAtomic(RAYA_CONFIG_PATH, `${JSON.stringify(ConfigSchema.parse(config), null, 2)}\n`);
 }
