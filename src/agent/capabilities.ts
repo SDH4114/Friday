@@ -66,7 +66,7 @@ Agent tools:
 Interfaces and persistence:
 - The same agent core supports the TUI, one-shot CLI, local Web app, Telegram gateway, scheduler, and subagents.
 - Providers include configured cloud models and local OpenAI-compatible endpoints such as Ollama, LM Studio, vLLM, or llama.cpp.
-- State is separated across config.json, owner-only .env credentials, commands.json, sessions.json, USER.md, MEMORY.md, scheduled.json, web.json, neovim.json, plugins, and skills under RAYA_HOME (normally ~/.raya).
+- State is separated across config.json, owner-only .env credentials, commands.json, sessions.json, USER.md, MEMORY.md, scheduled.json, web.json, plugins, and skills under RAYA_HOME (normally ~/.raya).
 - AGENTS.md supplies operating instructions and SOUL.md supplies user-authored personality, preferring RAYA_HOME and otherwise the nearest workspace file.
 
 Boundaries:

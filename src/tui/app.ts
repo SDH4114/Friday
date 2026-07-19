@@ -5,7 +5,6 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import { spawn } from "node:child_process";
 import { stdin as input, stdout as output } from "node:process";
 import { color, theme } from "./theme.js";
-import { createNeovimState, ensureNeovimConfig, handleNeovimKey, type NeovimConfig, type NeovimState } from "./neovim.js";
 import { DEFAULT_HOTKEYS, formatHotkey, matchesHotkey, type TuiHotkeys } from "./hotkeys.js";
 import { RAYA_SLASH_COMMANDS } from "../agent/capabilities.js";
 import { insertClipboardImage, insertClipboardText, readClipboard, removeImageMarker, writeClipboardText } from "./clipboard.js";
@@ -502,7 +501,7 @@ function isSuperModifiedKey(key: { sequence?: string }): boolean {
 }
 
 /** A compact prompt editor with terminal dropdowns for commands and workspace mentions. */
-type InputDraft = { value: string; cursor: number; neovimMode?: NeovimState["mode"]; images?: ImageContent[] };
+type InputDraft = { value: string; cursor: number; images?: ImageContent[] };
 type TuiLineResult = { line: string; images: ImageContent[] };
 
 /** Sanitize prompt text without replacing real line breaks with visible symbols. */
@@ -744,8 +743,6 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
   modelSuggestions?: (query: string) => CommandSuggestion[];
   themeSuggestions?: () => CommandSuggestion[];
   skillSuggestions?: () => TuiSkillSuggestion[];
-  neovimMode?: boolean;
-  neovimConfig?: NeovimConfig;
   hotkeys?: TuiHotkeys;
   workspace?: string;
 }, draft?: InputDraft, history: string[] = []): Promise<TuiLineResult> {
@@ -755,10 +752,7 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
 
   let value = draft?.value ?? "";
   const images = [...(draft?.images ?? [])];
-  const neovimConfig = options?.neovimMode ? (options.neovimConfig ?? ensureNeovimConfig()) : undefined;
-  const neovimState: NeovimState | undefined = neovimConfig ? createNeovimState(neovimConfig) : undefined;
-  if (neovimState && draft?.neovimMode) neovimState.mode = draft.neovimMode;
-  const label = (): string => value.startsWith("!") ? "[Term] > " : neovimState && neovimConfig?.show_mode ? `[${mode}] [${neovimState.mode}] > ` : `[${mode}] > `;
+  const label = (): string => value.startsWith("!") ? "[Term] > " : `[${mode}] > `;
   let cursor = Math.min(draft?.cursor ?? value.length, value.length);
   let selected = 0;
   let visible = 0;
@@ -796,15 +790,9 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
     output.write(`\r${renderedCursorRow > 0 ? `\x1b[${renderedCursorRow}A` : ""}`);
     const inputWidth = Math.max(terminalWidth - visibleWidth(label()), 1);
     const multilineViewport = multilinePromptViewport(value, cursor, inputWidth);
-    let displayRows = selectionAnchor === undefined || neovimState
+    const displayRows = selectionAnchor === undefined
       ? multilineViewport.rows
       : selectedMultilinePromptRows(value, cursor, selectionAnchor, inputWidth);
-    const entireValueFits = !value.includes("\n") && visibleWidth(displayPromptValue(value)) <= inputWidth;
-    if (entireValueFits && neovimState?.mode === "VISUAL" && neovimState.selectionStart !== undefined && value.length) {
-      const start = Math.min(neovimState.selectionStart, cursor);
-      const end = Math.max(neovimState.selectionStart, cursor) + 1;
-      displayRows = [`${displayPromptValue(value.slice(0, start))}\x1b[7m${displayPromptValue(value.slice(start, end))}${theme.reset}${displayPromptValue(value.slice(end))}`];
-    }
     for (const [index, row] of displayRows.entries()) {
       const prefix = index === 0 ? color(label(), theme.blue) : " ".repeat(visibleWidth(label()));
       output.write(prefix + color(styleImageMarkers(row), theme.white) + "\x1b[K\n");
@@ -1036,7 +1024,7 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
         return;
       }
       if (hotkeys.exit === "ctrl+c" && bytes.length === 1 && bytes[0] === 0x03) {
-        if (!neovimState && promptSelectionRange(cursor, selectionAnchor)) {
+        if (promptSelectionRange(cursor, selectionAnchor)) {
           return;
         }
         finish(resolve, EXIT_SIGNAL, false);
@@ -1085,7 +1073,7 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
       const previousValue = value;
       if (key.name !== "up" && key.name !== "down") verticalCursorColumn = undefined;
       const suggestions = menuDismissed ? [] : commandSuggestions(value, cursor, options?.sessionSuggestions, options?.thinkingSuggestions, options?.providerSuggestions, options?.modelSuggestions, options?.themeSuggestions, options?.skillSuggestions, workspaceSuggestions);
-      if (!neovimState && (key.meta || key.ctrl) && key.name === "c" && promptSelectionRange(cursor, selectionAnchor)) {
+      if ((key.meta || key.ctrl) && key.name === "c" && promptSelectionRange(cursor, selectionAnchor)) {
         void copySelection(false).catch((error) => notifyTui(`Could not copy selection: ${error instanceof Error ? error.message : String(error)}`));
         return;
       }
@@ -1108,10 +1096,8 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
       if (matchesHotkey(text, key, hotkeys.cancel) && suggestions.length) {
         menuDismissed = true;
         selected = 0;
-        if (!neovimState) {
-          render();
-          return;
-        }
+        render();
+        return;
       }
       if (key.name === "up" && suggestions.length && !key.shift && !key.ctrl && !key.meta) {
         verticalCursorColumn = undefined;
@@ -1125,7 +1111,7 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
         render();
         return;
       }
-      if (!neovimState && (key.name === "up" || key.name === "down")) {
+      if (key.name === "up" || key.name === "down") {
         const direction = key.name === "up" ? -1 : 1;
         if (isSuperModifiedKey(key) || key.meta) {
           moveEditorCursor(direction === -1 ? 0 : value.length, key.shift === true);
@@ -1139,49 +1125,37 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
           return;
         }
       }
-      if (!suggestions.length && ((!neovimState && !key.shift && !key.ctrl && !key.meta && key.name === "up")
-        || (neovimState?.mode === "NORMAL" && (text === "k" || (key.ctrl && key.name === "p"))))) {
+      if (!suggestions.length && !key.shift && !key.ctrl && !key.meta && key.name === "up") {
         navigateHistory(-1);
         render();
         return;
       }
-      if (!suggestions.length && ((!neovimState && !key.shift && !key.ctrl && !key.meta && key.name === "down")
-        || (neovimState?.mode === "NORMAL" && (text === "j" || (key.ctrl && key.name === "n"))))) {
+      if (!suggestions.length && !key.shift && !key.ctrl && !key.meta && key.name === "down") {
         navigateHistory(1);
         render();
         return;
       }
-      if (neovimState?.mode === "NORMAL" && suggestions.length && (text === "k" || (key.ctrl && key.name === "p"))) {
-        selected = selectableIndex(suggestions, selected, -1);
-        render();
-        return;
-      }
-      if (neovimState?.mode === "NORMAL" && suggestions.length && (text === "j" || (key.ctrl && key.name === "n"))) {
-        selected = selectableIndex(suggestions, selected, 1);
-        render();
-        return;
-      }
       if (matchesHotkey(text, key, hotkeys.toggleMode)) {
-        finish(resolve, `${MODE_TOGGLE_PREFIX}${JSON.stringify({ value, cursor, neovimMode: neovimState?.mode })}`, false);
+        finish(resolve, `${MODE_TOGGLE_PREFIX}${JSON.stringify({ value, cursor })}`, false);
         return;
       }
-      if (!neovimState && key.name === "escape" && selectionAnchor !== undefined) {
+      if (key.name === "escape" && selectionAnchor !== undefined) {
         selectionAnchor = undefined;
         render();
         return;
       }
-      if (!neovimState && (key.ctrl || key.meta) && key.name === "a") {
+      if ((key.ctrl || key.meta) && key.name === "a") {
         selectionAnchor = 0;
         cursor = value.length;
         verticalCursorColumn = undefined;
         render();
         return;
       }
-      if (!neovimState && (key.meta || key.ctrl) && key.name === "v") {
+      if ((key.meta || key.ctrl) && key.name === "v") {
         void pasteFromClipboard();
         return;
       }
-      if (!neovimState && (key.meta || key.ctrl) && key.name === "x") {
+      if ((key.meta || key.ctrl) && key.name === "x") {
         if (!promptSelectionRange(cursor, selectionAnchor) && value) {
           const start = promptLineStart(value, cursor);
           const end = promptLineEnd(value, cursor);
@@ -1191,7 +1165,7 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
         void copySelection(true).catch((error) => notifyTui(`Could not cut selection: ${error instanceof Error ? error.message : String(error)}`));
         return;
       }
-      if (!neovimState && (key.name === "left" || key.name === "right")) {
+      if (key.name === "left" || key.name === "right") {
         const forward = key.name === "right";
         const selection = promptSelectionRange(cursor, selectionAnchor);
         const nextCursor = selection && !key.shift && !key.ctrl && !key.meta
@@ -1206,7 +1180,7 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
         render();
         return;
       }
-      if (!neovimState && (key.name === "home" || key.name === "end")) {
+      if (key.name === "home" || key.name === "end") {
         const forward = key.name === "end";
         const nextCursor = key.ctrl || key.meta || isSuperModifiedKey(key)
           ? (forward ? value.length : 0)
@@ -1244,7 +1218,7 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
         finish(resolve, value);
         return;
       }
-      const standardDeletionKey = !neovimState && (
+      const standardDeletionKey = (
         key.name === "backspace" || key.name === "delete"
         || (key.ctrl && ["h", "d", "w", "u", "k"].includes(key.name ?? ""))
         || (key.meta && ["backspace", "delete", "d"].includes(key.name ?? ""))
@@ -1257,11 +1231,9 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
       }
       const markerDirection = (key.name === "backspace" && !isDeletePromptLineKey(key))
         || (key.meta && key.name === "backspace")
-        || (neovimState?.mode === "NORMAL" && text === "X")
         ? "backward"
         : (key.name === "delete" && !key.ctrl)
-          || (key.ctrl && key.name === "d")
-          || (neovimState?.mode === "NORMAL" && text === "x") ? "forward" : undefined;
+          || (key.ctrl && key.name === "d") ? "forward" : undefined;
       if (markerDirection) {
         const removed = removeImageMarker(value, cursor, markerDirection);
         if (removed) {
@@ -1273,19 +1245,6 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
           render();
           return;
         }
-      }
-      if (neovimState && neovimConfig) {
-        const edited = handleNeovimKey(value, cursor, text, key, neovimState, neovimConfig);
-        if (edited.submit) {
-          finish(resolve, edited.value);
-          return;
-        }
-        value = edited.value;
-        cursor = edited.cursor;
-        selected = 0;
-        if (value !== previousValue) menuDismissed = false;
-        render();
-        return;
       }
       if (key.ctrl && key.shift && key.name === "k") {
         const deleted = deletePromptLine(value, cursor);
@@ -1428,8 +1387,6 @@ export async function runInteractiveTui(inputAgent: Agent, info: TuiSessionInfo,
   skillSuggestions?: () => TuiSkillSuggestion[];
   statusInfo?: () => TuiSessionInfo;
   onBeforePrompt?: () => Promise<(() => void) | void> | (() => void) | void;
-  neovimMode?: boolean;
-  neovimConfig?: NeovimConfig;
   hotkeys?: TuiHotkeys;
   workspace?: string;
   onToggleMode?: (agent: Agent) => Promise<{ agent?: Agent; mode: "Plan" | "Build" }> | { agent?: Agent; mode: "Plan" | "Build" };

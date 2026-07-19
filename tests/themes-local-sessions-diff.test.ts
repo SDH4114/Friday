@@ -78,7 +78,7 @@ test("partial config updates never reset other or unknown config.json fields", (
   const home = mkdtempSync(join(tmpdir(), "raya-config-merge-"));
   const configPath = join(home, "config.json");
   try {
-    writeFileSync(configPath, JSON.stringify({ provider: "anthropic", model: "custom-model", mode: "build", customUserSetting: { keep: true } }));
+    writeFileSync(configPath, JSON.stringify({ provider: "anthropic", model: "custom-model", mode: "build", neovim_mode: true, vim_mode: true, customUserSetting: { keep: true } }));
     const script = [
       'import { updateConfig } from "./src/config/config.ts";',
       'updateConfig({ theme: "sunset" });'
@@ -91,6 +91,8 @@ test("partial config updates never reset other or unknown config.json fields", (
     assert.equal(stored.model, "custom-model");
     assert.equal(stored.mode, "build");
     assert.equal(stored.theme, "sunset");
+    assert.equal(stored.neovim_mode, undefined);
+    assert.equal(stored.vim_mode, undefined);
     assert.deepEqual(stored.customUserSetting, { keep: true });
 
     writeFileSync(configPath, "{ invalid json", "utf8");

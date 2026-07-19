@@ -24,7 +24,6 @@ import { notifyTui, requestTerminalApproval, runInteractiveTui } from "../tui/ap
 import { DEFAULT_HOTKEYS } from "../tui/hotkeys.js";
 import { color, setActiveTheme, theme, themeLabels, THEME_IDS, type ThemeId } from "../tui/theme.js";
 import { renderMarkdown } from "../tui/markdown.js";
-import { ensureNeovimConfig } from "../tui/neovim.js";
 import { startTelegramService } from "../telegram/service.js";
 import type { ToolExecutionPolicy } from "../types/tool.js";
 import { startScheduler } from "../scheduler/store.js";
@@ -641,7 +640,6 @@ program
     console.log(`security: ${config.securityMode}`);
     console.log(`design: ${config.headerStyle}`);
     console.log(`theme: ${config.theme}`);
-    console.log(`neovim_mode: ${config.neovim_mode}`);
     for (const [action, binding] of Object.entries(config.hotkeys)) console.log(`hotkey.${action}: ${binding}`);
     const enabledMcp = Object.entries(config.mcpServers).filter(([, server]) => server.enabled).map(([name]) => name);
     console.log(`mcp_enabled: ${enabledMcp.length ? enabledMcp.join(", ") : "(none)"}`);
@@ -720,16 +718,14 @@ program
   .option("--security <mode>", "Set security mode: standard or full.")
   .option("--design <style>", "Set startup design: small or large.")
   .option("--theme <theme>", "Set global theme: ocean or sunset.")
-  .option("--neovim <boolean>", "Enable or disable Neovim input mode: true or false.")
   .option("--hotkey <action=key>", "Set a TUI hotkey. Repeat for toggleMode, cancel, exit, or clearScreen.", collectOption, [])
   .option("--reset-hotkeys", "Restore all default TUI hotkeys.")
   .action((rawOptions: unknown) => {
-    const options = commandOptions<{ provider?: string; model?: string; mode?: string; thinking?: string; security?: string; design?: string; theme?: string; neovim?: string; hotkey: string[]; resetHotkeys?: boolean }>(rawOptions);
+    const options = commandOptions<{ provider?: string; model?: string; mode?: string; thinking?: string; security?: string; design?: string; theme?: string; hotkey: string[]; resetHotkeys?: boolean }>(rawOptions);
     const config = loadConfig();
     if (options.mode !== undefined && options.mode !== "plan" && options.mode !== "build") throw new Error("--mode must be plan or build.");
     if (options.thinking !== undefined && !["off", "minimal", "low", "medium", "high", "xhigh"].includes(options.thinking)) throw new Error("--thinking must be off, minimal, low, medium, high, or xhigh.");
     if (options.security !== undefined && options.security !== "standard" && options.security !== "full") throw new Error("--security must be standard or full.");
-    if (options.neovim !== undefined && options.neovim !== "true" && options.neovim !== "false") throw new Error("--neovim must be true or false.");
     if (options.design !== undefined && options.design !== "small" && options.design !== "large") throw new Error("--design must be small or large.");
     if (options.theme !== undefined && !THEME_IDS.includes(options.theme as ThemeId)) throw new Error("--theme must be ocean or sunset.");
     let provider = config.provider;
@@ -753,7 +749,6 @@ program
     if (options.security !== undefined) patch.securityMode = options.security as RayaConfig["securityMode"];
     if (options.design !== undefined) patch.headerStyle = options.design as RayaConfig["headerStyle"];
     if (options.theme !== undefined) patch.theme = options.theme as ThemeId;
-    if (options.neovim !== undefined) patch.neovim_mode = options.neovim === "true";
     if (options.resetHotkeys) patch.hotkeys = { ...DEFAULT_HOTKEYS };
     if (options.hotkey.length) {
       const requested = assignments(options.hotkey, "--hotkey");
@@ -764,7 +759,6 @@ program
     }
     const next = updateConfig(patch);
     setActiveTheme(next.theme);
-    if (next.neovim_mode) ensureNeovimConfig();
     const session = getOrCreateActiveSession(next);
     session.config = normalizeConfig({ ...session.config, ...patch, theme: next.theme });
     saveSession(session);
@@ -997,7 +991,6 @@ program
         console.log(`Security  : ${config.securityMode}`);
         console.log(`Design    : ${config.headerStyle}`);
         console.log(`Theme     : ${themeLabels[config.theme]}`);
-        console.log(`Neovim mode  : ${config.neovim_mode ? "Enabled" : "Disabled"}`);
         const enabledMcp = Object.entries(config.mcpServers).filter(([, server]) => server.enabled).map(([serverName]) => serverName);
         console.log(`MCP servers   : ${enabledMcp.length ? enabledMcp.join(", ") : "None"}`);
         console.log(`Skills        : ${listAvailableSkills().length}`);
@@ -1182,8 +1175,6 @@ program
             hotkeys: config.hotkeys
           };
         },
-        neovimMode: config.neovim_mode,
-        neovimConfig: config.neovim_mode ? ensureNeovimConfig() : undefined,
         hotkeys: config.hotkeys
       });
     } finally {

@@ -16,19 +16,19 @@ test("old session configs are fully normalized before use", () => {
   const home = mkdtempSync(join(tmpdir(), "raya-session-config-"));
   try {
     writeFileSync(join(home, "sessions.json"), JSON.stringify({
-      sessions: [{ id: "old", name: "Old", createdAt: 1, updatedAt: 1, config: { provider: "openai-codex", model: "gpt-5.4", mode: "edit" }, messages: [] }]
+      sessions: [{ id: "old", name: "Old", createdAt: 1, updatedAt: 1, config: { provider: "openai-codex", model: "gpt-5.4", mode: "edit", neovim_mode: true, vim_mode: true }, messages: [] }]
     }));
     const script = [
       'import { listSessions } from "./src/session/store.ts";',
       'const config = listSessions()[0].config;',
-      'console.log(JSON.stringify({ mode: config.mode, design: config.headerStyle, blocked: config.blockedCommands, neovim: config.neovim_mode }));'
+      'console.log(JSON.stringify({ mode: config.mode, design: config.headerStyle, blocked: config.blockedCommands, hasNeovim: "neovim_mode" in config, hasVim: "vim_mode" in config }));'
     ].join("");
     const output = execFileSync(process.execPath, ["--import", "tsx", "-e", script], {
       cwd: process.cwd(),
       env: { ...process.env, RAYA_HOME: home },
       encoding: "utf8"
     });
-    assert.deepEqual(JSON.parse(output), { mode: "build", design: "small", blocked: ["rm"], neovim: false });
+    assert.deepEqual(JSON.parse(output), { mode: "build", design: "small", blocked: ["rm"], hasNeovim: false, hasVim: false });
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

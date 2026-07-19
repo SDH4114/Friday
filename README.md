@@ -80,8 +80,6 @@ The defaults are `tab`, `escape`, `ctrl+c`, and `ctrl+l` for `toggleMode`, `canc
 
 The startup screen is a responsive Raya dashboard: the Raya logo is aligned to the left with live session state below it, beside Raya-specific workflow guidance and the currently configured controls. It becomes a stacked panel in narrow terminals. Use `raya config --design large` for the expanded ASCII identity panel, or `raya config --design small` for the compact core mark.
 
-Neovim input is optional. Enable it with `raya config --neovim true` and disable it with `raya config --neovim false`. When enabled, the single-line prompt starts in `NORMAL` mode and displays the current `NORMAL`, `INSERT`, `VISUAL`, or `REPLACE` state. It supports Unicode/grapheme-safe motions and counts, `i/a/I/A/gI/o/O`, `h/l/w/W/b/B/e/E/0/^/$/gg/G`, `f/F/t/T/;/,`, `d/c/y` operators, combined operator counts, `dd/cc/yy`, word and delimiter text objects such as `diw`, `daw`, `ci"`, and `da(`, `x/X/D/C/Y/s/S`, visual and visual-line selection, `p/P`, `r/R`, `u`, `Ctrl+R`, `.`, `~`, and prompt history through `j/k`. Insert sessions are grouped into one undo operation. `/` enters Insert mode and opens Raya's command palette. The complete default key map is created at `~/.raya/neovim.json` when Neovim mode is first enabled and is automatically extended with new defaults without replacing custom bindings. Existing `vim_mode` and `~/.raya/vim.json` settings are imported automatically on first use.
-
 Useful interactive commands:
 
 ```text

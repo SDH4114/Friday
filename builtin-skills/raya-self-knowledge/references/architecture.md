@@ -58,7 +58,7 @@ Important entrypoints include `src/cli/index.ts`, `src/agent/create-agent.ts`, `
 
 Raya normally stores config, auth, sessions, memory, scheduled work, plugins, and skills under `~/.raya`. Tests and smoke checks should set `RAYA_HOME` to an isolated temporary directory.
 
-`config.json` is non-secret configuration. `.env` is owner-only credential storage. `commands.json`, `sessions.json`, `web.json`, `scheduled.json`, `USER.md`, `MEMORY.md`, transcript Markdown, skills, plugins, `AGENTS.md`, `SOUL.md`, and `neovim.json` are separate stores with different lifetimes and ownership.
+`config.json` is non-secret configuration. `.env` is owner-only credential storage. `commands.json`, `sessions.json`, `web.json`, `scheduled.json`, `USER.md`, `MEMORY.md`, transcript Markdown, skills, plugins, `AGENTS.md`, and `SOUL.md` are separate stores with different lifetimes and ownership.
 
 ## Extension Points
 

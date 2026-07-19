@@ -9,13 +9,13 @@ Raya uses `~/.raya` by default and honors `RAYA_HOME` for isolation. Resolve exa
 - `.env`: provider and Telegram credentials with owner-only permissions.
 - `sessions.json`: conversations, workspace binding, and per-session config snapshots.
 - `USER.md` and `MEMORY.md`: bounded durable context.
-- `skills/`, `plugins/`, `memory/sessions/`, `scheduled.json`, `web.json`, and `neovim.json`: capability-specific state.
+- `skills/`, `plugins/`, `memory/sessions/`, `scheduled.json`, and `web.json`: capability-specific state.
 
 ## Config Fields
 
 - Model: `provider`, `model`, `thinkingLevel`, `localModels`.
 - Behavior: `mode`, `securityMode`, `autoApproveCommands`, `blockedCommands`.
-- Interface: `headerStyle`, `theme`, `neovim_mode`, `hotkeys`.
+- Interface: `headerStyle`, `theme`, `hotkeys`.
 - Extensions: `piPackages`, `mcpServers`.
 - Limits: `shellTimeoutMs`, `webTimeoutMs`, `webMaxChars`.
 
