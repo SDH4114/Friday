@@ -27,6 +27,22 @@ test("MCP config is normalized with visible enabled and safety settings", () => 
   assert.throws(() => normalizeConfig({ mcpServers: { "bad name": { transport: "stdio", command: "node" } } }));
 });
 
+test("MCP config imports common inferred and type-alias transports", () => {
+  const config = normalizeConfig({
+    mcpServers: {
+      inferred: { command: "node", args: ["server.js"] },
+      typed: { type: "stdio", command: "node" },
+      remote: { url: "https://example.com/mcp" },
+      legacy: { type: "sse", url: "https://example.com/sse" }
+    }
+  });
+  assert.equal(config.mcpServers.inferred?.transport, "stdio");
+  assert.equal(config.mcpServers.typed?.transport, "stdio");
+  assert.equal(config.mcpServers.remote?.transport, "http");
+  assert.equal(config.mcpServers.legacy?.transport, "sse");
+  assert.throws(() => normalizeConfig({ mcpServers: { bad: { url: "file:///tmp/mcp" } } }), /http or https/);
+});
+
 test("skill authoring is exposed only in Build mode", () => {
   const plan = createDefaultTools(normalizeConfig({ mode: "plan" })).map((tool) => tool.name);
   const build = createDefaultTools(normalizeConfig({ mode: "build" })).map((tool) => tool.name);
@@ -165,6 +181,11 @@ test("first Raya config load installs built-in skills without replacing user fil
       cwd: process.cwd(), env: { ...process.env, RAYA_HOME: home }, encoding: "utf8"
     });
     assert.equal(readFileSync(customized, "utf8"), "# My customized debugging skill\n");
+    execFileSync(process.execPath, ["--import", "tsx", "-e", 'import { ensureBuiltinSkills } from "./src/skills/bootstrap.ts"; ensureBuiltinSkills({ overwrite: true });'], {
+      cwd: process.cwd(), env: { ...process.env, RAYA_HOME: home }, encoding: "utf8"
+    });
+    assert.match(readFileSync(customized, "utf8"), /# Debugging/);
+    assert.equal(existsSync(join(home, "skills", "raya-self-knowledge", "references", "configuration.md")), true);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
@@ -182,8 +203,9 @@ test("skill catalog uses metadata and loads full instructions progressively", ()
     const output = execFileSync(process.execPath, ["--import", "tsx", "-e", script], {
       cwd: process.cwd(), env: { ...process.env, RAYA_HOME: home }, encoding: "utf8"
     });
-    assert.match(output, /raya-self-knowledge: Understand Raya's identity/);
+    assert.match(output, /raya-self-knowledge: Understand Raya's complete identity/);
     assert.match(output, /create-raya-skills: Create or update reusable Raya skills/);
+    assert.match(output, /@skill:debugging.*explicit request/);
     assert.doesNotMatch(output, /# Raya Self Knowledge/);
     assert.doesNotMatch(output, /## Repair or Improve Raya/);
   } finally {

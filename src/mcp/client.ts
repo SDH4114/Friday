@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport, getDefaultEnvironment } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { ListRootsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { Type } from "@earendil-works/pi-ai";
 import type { McpServerConfig, RayaConfig } from "../config/config.js";
@@ -67,6 +68,12 @@ function resolveRecord(values: Record<string, string>): Record<string, string> {
   return Object.fromEntries(Object.entries(values).map(([key, value]) => [key, expandMcpValue(value)]));
 }
 
+function mergeHeaders(base: HeadersInit | undefined, extra: Record<string, string>): Headers {
+  const headers = new Headers(base);
+  for (const [name, value] of Object.entries(extra)) headers.set(name, value);
+  return headers;
+}
+
 function namespacedToolName(server: string, tool: string): string {
   const base = `mcp_${server}_${tool}`.replace(/[^a-zA-Z0-9_-]/g, "_");
   if (base.length <= 56) return base;
@@ -123,10 +130,19 @@ async function connectServer(name: string, config: McpServerConfig, clientVersio
       // Drain server diagnostics so a noisy child cannot block, while keeping the TUI clean.
       transport.stderr?.on("data", () => undefined);
       await client.connect(transport, { timeout: config.timeoutMs });
-    } else {
+    } else if (config.transport === "http") {
       const headers = resolveRecord(config.headers);
       const transport = new StreamableHTTPClientTransport(new URL(expandMcpValue(config.url)), {
         requestInit: { headers }
+      });
+      await client.connect(transport, { timeout: config.timeoutMs });
+    } else {
+      const headers = resolveRecord(config.headers);
+      const transport = new SSEClientTransport(new URL(expandMcpValue(config.url)), {
+        requestInit: { headers },
+        eventSourceInit: {
+          fetch: (url, init) => fetch(url, { ...init, headers: mergeHeaders(init?.headers, headers) })
+        }
       });
       await client.connect(transport, { timeout: config.timeoutMs });
     }
@@ -172,7 +188,6 @@ export class McpRuntime {
       } catch (error) {
         const status = { name, enabled: server.enabled, connected: false, transport: server.transport, tools: 0, error: errorMessage(error) } as const;
         options.onStatus?.(status);
-        if (options.strict) throw new Error(`MCP ${name}: ${status.error}`);
         return status;
       }
     }));
@@ -181,7 +196,13 @@ export class McpRuntime {
         statuses.push({ name, enabled: false, connected: false, transport: server.transport, tools: 0 });
       }
     }
-    return new McpRuntime(servers, statuses.sort((a, b) => a.name.localeCompare(b.name)));
+    const runtime = new McpRuntime(servers, statuses.sort((a, b) => a.name.localeCompare(b.name)));
+    const failed = runtime.statuses.find((status) => !status.connected && (options.only ? status.name === options.only : status.enabled));
+    if (options.strict && failed) {
+      await runtime.close();
+      throw new Error(`MCP ${failed.name}: ${failed.error}`);
+    }
+    return runtime;
   }
 
   get connectedCount(): number {

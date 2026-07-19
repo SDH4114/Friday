@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { stdin as input, stdout as output } from "node:process";
 import { color, theme } from "./theme.js";
 import { createNeovimState, ensureNeovimConfig, handleNeovimKey, type NeovimConfig, type NeovimState } from "./neovim.js";
+import { DEFAULT_HOTKEYS, formatHotkey, matchesHotkey, type TuiHotkeys } from "./hotkeys.js";
 
 let activeNotificationHandler: ((message: string) => void) | undefined;
 let activeRawInputHandler: ((data: Buffer | string) => void) | undefined;
@@ -58,8 +59,10 @@ export type TuiSessionInfo = {
   headerStyle: "small" | "large";
   session?: string;
   version: string;
+  thinkingLevel?: string;
   contextTokens?: number;
   contextWindow?: number;
+  hotkeys?: TuiHotkeys;
 };
 
 export type SlashCommandContext = {
@@ -71,6 +74,11 @@ export type TuiSessionSuggestion = {
   id: string;
   name: string;
   detail: string;
+};
+
+export type TuiSkillSuggestion = {
+  name: string;
+  description: string;
 };
 
 type CommandSuggestion = {
@@ -98,7 +106,7 @@ const slashCommands: CommandSuggestion[] = [
   { value: "/sessions", description: "Create/open sessions · dd deletes selected" },
   { value: "/mcps", description: "Show configured and enabled MCP servers" },
   { value: "/skills", description: "Show available skills" },
-  { value: "/About", description: "What Raya is and what she can do" },
+  { value: "/about", description: "What Raya is and what she can do" },
   { value: "/status", description: "Show current status" },
   { value: "/clear", description: "Clear this conversation" },
   { value: "/exit", description: "Exit Raya" }
@@ -139,18 +147,15 @@ function fitCell(value: string, width: number): string {
   return result + " ".repeat(Math.max(width - visibleWidth(result), 0));
 }
 
-function centerCell(value: string, width: number): string {
-  const fitted = fitCell(value, width).trimEnd();
-  const remaining = Math.max(width - visibleWidth(fitted), 0);
-  const left = Math.floor(remaining / 2);
-  return `${" ".repeat(left)}${fitted}${" ".repeat(remaining - left)}`;
-}
-
 function dashboardTitle(width: number, title: string): string {
   const innerWidth = Math.max(width - 2, 0);
   const rawLabel = `─ ${title} `;
   const label = visibleWidth(rawLabel) <= innerWidth ? rawLabel : fitCell(rawLabel, innerWidth).trimEnd();
   return `╭${label}${"─".repeat(Math.max(innerWidth - visibleWidth(label), 0))}╮`;
+}
+
+export function modelStatusLabel(info: Pick<TuiSessionInfo, "model" | "thinkingLevel">): string {
+  return info.thinkingLevel ? `${info.model} (${info.thinkingLevel})` : info.model;
 }
 
 function statusLines(info: TuiSessionInfo): string[] {
@@ -160,7 +165,7 @@ function statusLines(info: TuiSessionInfo): string[] {
   return [
     ...brand,
     "",
-    `Model      ${info.model}`,
+    `Model      ${modelStatusLabel(info)}`,
     `Mode       ${info.mode}`,
     `Workspace  ${info.directory}`,
     `Session    ${info.session ?? "Fresh session"}`,
@@ -168,7 +173,7 @@ function statusLines(info: TuiSessionInfo): string[] {
   ];
 }
 
-const protocolLines = [
+function protocolLines(hotkeys: TuiHotkeys = DEFAULT_HOTKEYS): string[] { return [
   "Raya A.P.P.L.E.",
   "Adaptive",
   "Personal",
@@ -177,24 +182,24 @@ const protocolLines = [
   "Engine",
   "",
   "CONTROL DECK",
-  "Tab          switch Plan ↔ Build",
+  `${formatHotkey(hotkeys.toggleMode).padEnd(12)} switch Plan ↔ Build`,
   "/help        commands and shortcuts",
   "/sessions    continue earlier work",
-  "/exit and Ctrl+C       quit",
-];
+  `/exit and ${formatHotkey(hotkeys.exit).padEnd(12)} quit`,
+]; }
 
 export function renderStartupDashboard(info: TuiSessionInfo, requestedWidth = 120): string[] {
   const width = Math.max(32, Math.floor(requestedWidth));
   const title = `Raya A.P.P.L.E.  v${info.version}`;
   const left = statusLines(info);
+  const controls = protocolLines(info.hotkeys);
 
   if (width < 88) {
     const contentWidth = width - 4;
-    const lines = [...left, "", ...protocolLines];
-    const brandHeight = info.headerStyle === "large" ? largeRayaLogo.length + 1 : 2;
+    const lines = [...left, "", ...controls];
     return [
       dashboardTitle(width, title),
-      ...lines.map((line, index) => `│ ${index < brandHeight ? centerCell(line, contentWidth) : fitCell(line, contentWidth)} │`),
+      ...lines.map((line) => `│ ${fitCell(line, contentWidth)} │`),
       `╰${"─".repeat(width - 2)}╯`
     ];
   }
@@ -202,10 +207,9 @@ export function renderStartupDashboard(info: TuiSessionInfo, requestedWidth = 12
   const available = width - 7;
   const leftWidth = Math.max(34, Math.floor(available * 0.38));
   const rightWidth = available - leftWidth;
-  const height = Math.max(left.length, protocolLines.length);
-  const brandHeight = info.headerStyle === "large" ? largeRayaLogo.length + 1 : 2;
+  const height = Math.max(left.length, controls.length);
   const rows = Array.from({ length: height }, (_, index) =>
-    `│ ${index < brandHeight ? centerCell(left[index] ?? "", leftWidth) : fitCell(left[index] ?? "", leftWidth)} │ ${fitCell(protocolLines[index] ?? "", rightWidth)} │`);
+    `│ ${fitCell(left[index] ?? "", leftWidth)} │ ${fitCell(controls[index] ?? "", rightWidth)} │`);
   return [
     dashboardTitle(width, title),
     ...rows,
@@ -226,14 +230,15 @@ function activeCommandStart(value: string, cursor: number): number | undefined {
   return start;
 }
 
-function commandSuggestions(
+export function commandSuggestions(
   value: string,
   cursor: number,
   sessionSuggestions: () => TuiSessionSuggestion[] = () => [],
   thinkingSuggestions: () => string[] = () => [],
   providerSuggestions: (value: string) => CommandSuggestion[] = () => [],
   modelSuggestions: (query: string) => CommandSuggestion[] = () => [],
-  themeSuggestions: () => CommandSuggestion[] = () => []
+  themeSuggestions: () => CommandSuggestion[] = () => [],
+  skillSuggestions: () => TuiSkillSuggestion[] = () => []
 ): CommandSuggestion[] {
   const sessionPrefix = "/sessions ";
   if (value.startsWith(sessionPrefix) && cursor >= sessionPrefix.length) {
@@ -259,6 +264,21 @@ function commandSuggestions(
     const query = value.slice(thinkingPrefix.length, cursor).toLowerCase();
     return levels.filter(([id, label]) => id.startsWith(query) || label.toLowerCase().startsWith(query))
       .map(([id, label]) => ({ value: `/thinking ${id}`, description: label }));
+  }
+  const skillPrefix = "/skills ";
+  if (value.startsWith(skillPrefix) && cursor >= skillPrefix.length) {
+    const query = value.slice(skillPrefix.length, cursor).trim().toLowerCase();
+    const skills = skillSuggestions().filter((skill) =>
+      !query || `${skill.name} ${skill.description}`.toLowerCase().includes(query));
+    return [
+      { value: "Skills · Enter attaches to message:", description: "", selectable: false },
+      ...(skills.length ? skills.map((skill) => ({
+        value: `@skill:${skill.name}`,
+        label: skill.name,
+        description: skill.description,
+        needsArgument: true
+      })) : [{ value: "  (none)", description: "", selectable: false }])
+    ];
   }
   const securityPrefix = "/security ";
   if (value.startsWith(securityPrefix) && cursor >= securityPrefix.length) {
@@ -321,7 +341,7 @@ const MODE_TOGGLE_PREFIX = "__RAYA_TOGGLE_MODE__";
 const EXIT_SIGNAL = "__RAYA_EXIT__";
 const MENU_OPEN_PREFIX = "__RAYA_OPEN_MENU__";
 const MAX_VISIBLE_SUGGESTIONS = 12;
-const MENU_COMMANDS = new Set(["/providers", "/models", "/thinking", "/theme", "/security", "/sessions"]);
+const MENU_COMMANDS = new Set(["/providers", "/models", "/thinking", "/theme", "/security", "/sessions", "/skills"]);
 
 export type SessionDeleteKeyResult =
   | { kind: "armed"; value: string }
@@ -355,14 +375,26 @@ function compactTokens(value: number): string {
   return String(value);
 }
 
+export function fitSuggestionLine(label: string, description: string, width: number): { label: string; description: string } {
+  const safeWidth = Math.max(Math.floor(width), 4);
+  const labelWidth = Math.min(18, Math.max(safeWidth - 3, 1));
+  const descriptionWidth = Math.max(safeWidth - 2 - labelWidth - 1, 0);
+  return {
+    label: fitCell(label, labelWidth),
+    description: descriptionWidth ? fitCell(description, descriptionWidth).trimEnd() : ""
+  };
+}
+
 async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, options?: {
   sessionSuggestions?: () => TuiSessionSuggestion[];
   thinkingSuggestions?: () => string[];
   providerSuggestions?: (value: string) => CommandSuggestion[];
   modelSuggestions?: (query: string) => CommandSuggestion[];
   themeSuggestions?: () => CommandSuggestion[];
+  skillSuggestions?: () => TuiSkillSuggestion[];
   neovimMode?: boolean;
   neovimConfig?: NeovimConfig;
+  hotkeys?: TuiHotkeys;
 }, draft?: InputDraft, history: string[] = []): Promise<string> {
   if (!input.isTTY || !output.isTTY || !input.setRawMode) {
     throw new Error("Raya's interactive TUI requires a TTY terminal.");
@@ -383,10 +415,14 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
   let menuDismissed = false;
   let settled = false;
   let onData: (data: Buffer | string) => void;
+  const hotkeys = options?.hotkeys ?? info().hotkeys ?? DEFAULT_HOTKEYS;
 
   const render = (): void => {
     const current = info();
-    const suggestions = menuDismissed ? [] : commandSuggestions(value, cursor, options?.sessionSuggestions, options?.thinkingSuggestions, options?.providerSuggestions, options?.modelSuggestions, options?.themeSuggestions);
+    // Leave the last terminal column unused: writing into it can trigger an
+    // automatic wrap that readline reports as an extra physical row.
+    const terminalWidth = Math.max((output.columns ?? 121) - 1, 32);
+    const suggestions = menuDismissed ? [] : commandSuggestions(value, cursor, options?.sessionSuggestions, options?.thinkingSuggestions, options?.providerSuggestions, options?.modelSuggestions, options?.themeSuggestions, options?.skillSuggestions);
     if (selected >= suggestions.length) selected = Math.max(suggestions.length - 1, 0);
     if (suggestions[selected]?.selectable === false) selected = selectableIndex(suggestions, selected - 1, 1);
     if (renderedLines > 0) output.write(`\x1b[${renderedLines}B\r\x1b[J\x1b[${renderedLines}A\r`);
@@ -402,30 +438,32 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
     const visibleSuggestions = suggestions.slice(windowStart, windowStart + MAX_VISIBLE_SUGGESTIONS);
     let suggestionLines = 0;
     if (windowStart > 0) {
-      output.write(`${color(`  ↑ ${windowStart} more`, theme.gray)}\n`);
+      output.write(`${color(fitCell(`  ↑ ${windowStart} more`, terminalWidth).trimEnd(), theme.gray)}\n`);
       suggestionLines += 1;
     }
     for (const [visibleIndex, suggestion] of visibleSuggestions.entries()) {
       const index = windowStart + visibleIndex;
       if (suggestion.selectable === false) {
-        output.write(`${color(suggestion.value, theme.cyan)}\n`);
+        output.write(`${color(fitCell(suggestion.value, terminalWidth).trimEnd(), theme.cyan)}\n`);
         suggestionLines += 1;
         continue;
       }
       const marker = index === selected ? color("›", theme.cyan) : " ";
       const description = sessionDeleteDescription(suggestion.deleteValue, deleteArmedValue, suggestion.description);
-      const line = `${marker} ${color((suggestion.label ?? suggestion.value).padEnd(18), theme.white)} ${color(description, theme.gray)}`;
+      const fitted = fitSuggestionLine(suggestion.label ?? suggestion.value, description, terminalWidth);
+      const line = `${marker} ${color(fitted.label, theme.white)}${fitted.description ? ` ${color(fitted.description, theme.gray)}` : ""}`;
       output.write(`${line}\n`);
       suggestionLines += 1;
     }
     const hiddenBelow = suggestions.length - windowStart - visibleSuggestions.length;
     if (hiddenBelow > 0) {
-      output.write(`${color(`  ↓ ${hiddenBelow} more`, theme.gray)}\n`);
+      output.write(`${color(fitCell(`  ↓ ${hiddenBelow} more`, terminalWidth).trimEnd(), theme.gray)}\n`);
       suggestionLines += 1;
     }
     const used = compactTokens(current.contextTokens ?? 0);
     const limit = compactTokens(current.contextWindow ?? 0);
-    output.write(color(`Context ${used}/${limit} · ${current.model} · ${current.directory} · Raya v${current.version}`, theme.gray) + "\n");
+    const footer = `Context ${used}/${limit} · ${modelStatusLabel(current)} · ${current.directory} · Raya v${current.version}`;
+    output.write(color(fitCell(footer, terminalWidth).trimEnd(), theme.gray) + "\n");
     visible = suggestionLines;
     renderedLines = visible + 2;
     const cursorColumn = visibleWidth(label()) + visibleWidth(value.slice(0, cursor));
@@ -446,7 +484,7 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
   };
 
   const insertCommand = (suggestion: CommandSuggestion, addSpace: boolean): void => {
-    const start = activeCommandStart(value, cursor) ?? ((value.startsWith("/sessions") || value.startsWith("/thinking") || value.startsWith("/theme") || value.startsWith("/security") || value.startsWith("/providers") || value.startsWith("/models")) ? 0 : undefined);
+    const start = activeCommandStart(value, cursor) ?? ((value.startsWith("/sessions") || value.startsWith("/thinking") || value.startsWith("/theme") || value.startsWith("/security") || value.startsWith("/providers") || value.startsWith("/models") || value.startsWith("/skills")) ? 0 : undefined);
     if (start === undefined) return;
     const insertion = `${suggestion.value}${addSpace || suggestion.needsArgument ? " " : ""}`;
     value = value.slice(0, start) + insertion + value.slice(cursor);
@@ -470,12 +508,12 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
   const result = new Promise<string>((resolve) => {
     onData = (data) => {
       const bytes = Buffer.isBuffer(data) ? data : Buffer.from(data);
-      if (bytes.length === 1 && bytes[0] === 0x03) {
+      if (hotkeys.exit === "ctrl+c" && bytes.length === 1 && bytes[0] === 0x03) {
         finish(resolve, EXIT_SIGNAL, false);
         return;
       }
-      if (bytes.length === 1 && bytes[0] === 0x1b) {
-        const suggestions = menuDismissed ? [] : commandSuggestions(value, cursor, options?.sessionSuggestions, options?.thinkingSuggestions, options?.providerSuggestions, options?.modelSuggestions, options?.themeSuggestions);
+      if (hotkeys.cancel === "escape" && bytes.length === 1 && bytes[0] === 0x1b) {
+        const suggestions = menuDismissed ? [] : commandSuggestions(value, cursor, options?.sessionSuggestions, options?.thinkingSuggestions, options?.providerSuggestions, options?.modelSuggestions, options?.themeSuggestions, options?.skillSuggestions);
         if (suggestions.length) {
           menuDismissed = true;
           selected = 0;
@@ -485,8 +523,8 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
     };
     onKeypress = (text, key) => {
       const previousValue = value;
-      const suggestions = menuDismissed ? [] : commandSuggestions(value, cursor, options?.sessionSuggestions, options?.thinkingSuggestions, options?.providerSuggestions, options?.modelSuggestions, options?.themeSuggestions);
-      if (key.ctrl && key.name === "c") {
+      const suggestions = menuDismissed ? [] : commandSuggestions(value, cursor, options?.sessionSuggestions, options?.thinkingSuggestions, options?.providerSuggestions, options?.modelSuggestions, options?.themeSuggestions, options?.skillSuggestions);
+      if (matchesHotkey(text, key, hotkeys.exit)) {
         finish(resolve, EXIT_SIGNAL, false);
         return;
       }
@@ -502,7 +540,7 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
         return;
       }
       deleteArmedValue = undefined;
-      if (key.name === "escape" && suggestions.length) {
+      if (matchesHotkey(text, key, hotkeys.cancel) && suggestions.length) {
         menuDismissed = true;
         selected = 0;
         if (!neovimState) {
@@ -540,7 +578,7 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
         render();
         return;
       }
-      if (key.name === "tab") {
+      if (matchesHotkey(text, key, hotkeys.toggleMode)) {
         finish(resolve, `${MODE_TOGGLE_PREFIX}${JSON.stringify({ value, cursor, neovimMode: neovimState?.mode })}`, false);
         return;
       }
@@ -548,7 +586,7 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
         if (suggestions.length) {
           const suggestion = suggestions[selected]!;
           if (suggestion.selectable === false) return;
-          const commandAtStart = (activeCommandStart(value, cursor) === 0 || value.startsWith("/sessions") || value.startsWith("/thinking") || value.startsWith("/theme") || value.startsWith("/security") || value.startsWith("/providers") || value.startsWith("/models")) && cursor === value.length;
+          const commandAtStart = (activeCommandStart(value, cursor) === 0 || value.startsWith("/sessions") || value.startsWith("/thinking") || value.startsWith("/theme") || value.startsWith("/security") || value.startsWith("/providers") || value.startsWith("/models") || value.startsWith("/skills")) && cursor === value.length;
           if (commandAtStart && MENU_COMMANDS.has(suggestion.value)) {
             finish(resolve, `${MENU_OPEN_PREFIX}${suggestion.value}`, false);
             return;
@@ -607,7 +645,7 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
         const right = value[cursor]!;
         value = value.slice(0, cursor - 1) + right + left + value.slice(cursor + 1);
         cursor += 1;
-      } else if (key.ctrl && key.name === "l") {
+      } else if (matchesHotkey(text, key, hotkeys.clearScreen)) {
         output.write("\x1b[2J\x1b[H");
       } else if ((key.meta && key.name === "b") || (key.ctrl && key.name === "left")) {
         cursor = wordStart(value, cursor);
@@ -668,7 +706,7 @@ async function runTerminalCommand(command: string): Promise<void> {
   });
 }
 
-async function runAgentPromptWithEscape(agent: Agent, message: string): Promise<boolean> {
+async function runAgentPromptWithHotkeys(agent: Agent, message: string, hotkeys: TuiHotkeys): Promise<boolean> {
   let cancelled = false;
   const cancel = (): void => {
     if (cancelled) return;
@@ -685,12 +723,12 @@ async function runAgentPromptWithEscape(agent: Agent, message: string): Promise<
   };
   const onData = (data: Buffer | string): void => {
     const bytes = Buffer.isBuffer(data) ? data : Buffer.from(data);
-    if (bytes.length === 1 && bytes[0] === 0x1b) cancel();
-    if (bytes.length === 1 && bytes[0] === 0x03) exit();
+    if (hotkeys.cancel === "escape" && bytes.length === 1 && bytes[0] === 0x1b) cancel();
+    if (hotkeys.exit === "ctrl+c" && bytes.length === 1 && bytes[0] === 0x03) exit();
   };
-  const onKeypress = (_text: string, key: { name?: string; ctrl?: boolean }): void => {
-    if (key.name === "escape") cancel();
-    if (key.ctrl && key.name === "c") exit();
+  const onKeypress = (text: string, key: { name?: string; ctrl?: boolean; meta?: boolean; shift?: boolean }): void => {
+    if (matchesHotkey(text, key, hotkeys.cancel)) cancel();
+    if (matchesHotkey(text, key, hotkeys.exit)) exit();
   };
 
   activeRawInputHandler = onData;
@@ -719,15 +757,18 @@ export async function runInteractiveTui(inputAgent: Agent, info: TuiSessionInfo,
   providerSuggestions?: (value: string) => TuiCommandSuggestion[];
   modelSuggestions?: (query: string) => TuiCommandSuggestion[];
   themeSuggestions?: () => TuiCommandSuggestion[];
+  skillSuggestions?: () => TuiSkillSuggestion[];
   statusInfo?: () => TuiSessionInfo;
   onBeforePrompt?: () => Promise<(() => void) | void> | (() => void) | void;
   neovimMode?: boolean;
   neovimConfig?: NeovimConfig;
+  hotkeys?: TuiHotkeys;
   onToggleMode?: (agent: Agent) => Promise<{ agent?: Agent; mode: "Plan" | "Build" }> | { agent?: Agent; mode: "Plan" | "Build" };
 }): Promise<void> {
   let agent = inputAgent;
   let mode = info.mode as "Plan" | "Build";
   let draft: InputDraft | undefined;
+  const hotkeys = options?.hotkeys ?? info.hotkeys ?? DEFAULT_HOTKEYS;
   const promptHistory: string[] = [];
 
   const loadPromptHistory = (): void => {
@@ -812,7 +853,7 @@ export async function runInteractiveTui(inputAgent: Agent, info: TuiSessionInfo,
       try {
         const messagesBeforePrompt = [...agent.state.messages];
         if (promptHistory.at(-1) !== message) promptHistory.push(message);
-        const cancelled = await runAgentPromptWithEscape(agent, message);
+        const cancelled = await runAgentPromptWithHotkeys(agent, message, hotkeys);
         if (cancelled) {
           agent.state.messages = messagesBeforePrompt;
           continue;

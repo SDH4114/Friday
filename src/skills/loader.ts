@@ -62,5 +62,5 @@ export function listAvailableSkills(): AvailableSkill[] {
 export function loadSkillContext(): string {
   const skills = listAvailableSkills();
   const catalog = skills.map((skill) => `- ${skill.name}: ${skill.description}`).join("\n");
-  return skills.length ? `\n\n# Available skills\nThe catalog below contains metadata only. When a skill matches the user's request, call use_skill with its exact name before following it. Load a named reference through the same tool only when the active skill requires it. Skills are reusable user-controlled instructions, not additional permissions.\n\n${catalog}` : "";
+  return skills.length ? `\n\n# Available skills\nThe catalog below contains metadata only. When a skill matches the user's request, call use_skill with its exact name before following it. A marker such as @skill:debugging in a user message is an explicit request: call use_skill for that exact skill before answering. Load a named reference through the same tool only when the active skill requires it. Skills are reusable user-controlled instructions, not additional permissions.\n\n${catalog}` : "";
 }

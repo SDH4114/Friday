@@ -20,6 +20,7 @@ import { createRayaAgent, createRayaTools } from "../agent/create-agent.js";
 import { commandMatchesAutoApprovePrefix } from "../tools/shell.js";
 import { formatToolActivity, renderAgentEvent } from "../tui/render-events.js";
 import { notifyTui, requestTerminalApproval, runInteractiveTui } from "../tui/app.js";
+import { DEFAULT_HOTKEYS } from "../tui/hotkeys.js";
 import { color, setActiveTheme, theme, themeLabels, THEME_IDS, type ThemeId } from "../tui/theme.js";
 import { renderMarkdown } from "../tui/markdown.js";
 import { ensureNeovimConfig } from "../tui/neovim.js";
@@ -469,6 +470,7 @@ program
   .option("--cwd <path>", "Working directory for a stdio server.")
   .option("--env <KEY=VALUE>", "Repeatable environment value. Supports ${ENV_VAR} placeholders.", collectOption, [])
   .option("--url <url>", "Streamable HTTP MCP endpoint.")
+  .option("--transport <transport>", "Remote transport: http or sse.", "http")
   .option("--header <KEY=VALUE>", "Repeatable HTTP header. Supports ${ENV_VAR} placeholders.", collectOption, [])
   .option("--approval <mode>", "always, writes, or never", "writes")
   .option("--timeout <ms>", "Connection timeout in milliseconds.", "30000")
@@ -478,7 +480,7 @@ program
     const config = loadConfig();
     const options = commandOptions<{
       command?: string; arg: string[]; cwd?: string; env: string[]; url?: string; header: string[];
-      approval: "always" | "writes" | "never"; timeout: string; toolTimeout: string; disabled?: boolean;
+      approval: "always" | "writes" | "never"; timeout: string; toolTimeout: string; transport: "http" | "sse"; disabled?: boolean;
     }>(rawOptions);
     if (action === "list") {
       const entries = Object.entries(config.mcpServers);
@@ -520,6 +522,8 @@ program
     }
     if (action !== "add") throw new Error("MCP action must be list, add, enable, disable, remove, or test.");
     if (Boolean(options.command) === Boolean(options.url)) throw new Error("Use exactly one of --command (stdio) or --url (Streamable HTTP).");
+    if (options.transport !== "http" && options.transport !== "sse") throw new Error("--transport must be http or sse.");
+    if (options.command && options.transport !== "http") throw new Error("--transport only applies together with --url.");
     if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(name)) throw new Error("MCP name may contain letters, numbers, dots, underscores, and hyphens.");
     const timeoutMs = Number(options.timeout);
     const toolTimeoutMs = Number(options.toolTimeout);
@@ -527,7 +531,7 @@ program
     const common = { enabled: !options.disabled, approval: options.approval, timeoutMs, toolTimeoutMs };
     const server = options.command
       ? { ...common, transport: "stdio" as const, command: options.command, args: options.arg, ...(options.cwd ? { cwd: options.cwd } : {}), env: assignments(options.env, "--env") }
-      : { ...common, transport: "http" as const, url: options.url!, headers: assignments(options.header, "--header") };
+      : { ...common, transport: options.transport, url: options.url!, headers: assignments(options.header, "--header") };
     const normalized = normalizeConfig({ ...config, mcpServers: { ...config.mcpServers, [name]: server } });
     updateConfig({ mcpServers: normalized.mcpServers });
     console.log(color(`Saved MCP server ${name} (${server.transport}, ${server.enabled ? "enabled" : "disabled"}).`, theme.green));
@@ -538,10 +542,12 @@ program
   .command("skills")
   .argument("[action]", "list or sync", "list")
   .description("List skills or install missing built-in Raya skills.")
-  .action((action: string) => {
+  .option("--force", "Replace installed built-in skill folders with the packaged versions.")
+  .action((action: string, rawOptions: unknown) => {
+    const options = commandOptions<{ force?: boolean }>(rawOptions);
     if (action === "sync") {
-      const installed = ensureBuiltinSkills();
-      console.log(installed.length ? `Installed built-in skills: ${installed.join(", ")}` : "Built-in skills are already installed.");
+      const installed = ensureBuiltinSkills({ overwrite: options.force });
+      console.log(installed.length ? `${options.force ? "Replaced" : "Installed"} built-in skills: ${installed.join(", ")}` : "Built-in skills are already installed.");
       console.log(`Skills directory: ${RAYA_SKILLS_DIR}`);
       return;
     }
@@ -568,6 +574,7 @@ program
     console.log(`design: ${config.headerStyle}`);
     console.log(`theme: ${config.theme}`);
     console.log(`neovim_mode: ${config.neovim_mode}`);
+    for (const [action, binding] of Object.entries(config.hotkeys)) console.log(`hotkey.${action}: ${binding}`);
     const enabledMcp = Object.entries(config.mcpServers).filter(([, server]) => server.enabled).map(([name]) => name);
     console.log(`mcp_enabled: ${enabledMcp.length ? enabledMcp.join(", ") : "(none)"}`);
     console.log(`skills: ${listAvailableSkills().length} loaded from ${RAYA_SKILLS_DIR}`);
@@ -645,8 +652,10 @@ program
   .option("--design <style>", "Set startup design: small or large.")
   .option("--theme <theme>", "Set global theme: ocean or sunset.")
   .option("--neovim <boolean>", "Enable or disable Neovim input mode: true or false.")
+  .option("--hotkey <action=key>", "Set a TUI hotkey. Repeat for toggleMode, cancel, exit, or clearScreen.", collectOption, [])
+  .option("--reset-hotkeys", "Restore all default TUI hotkeys.")
   .action((rawOptions: unknown) => {
-    const options = commandOptions<{ provider?: string; model?: string; mode?: string; thinking?: string; security?: string; design?: string; theme?: string; neovim?: string }>(rawOptions);
+    const options = commandOptions<{ provider?: string; model?: string; mode?: string; thinking?: string; security?: string; design?: string; theme?: string; neovim?: string; hotkey: string[]; resetHotkeys?: boolean }>(rawOptions);
     const config = loadConfig();
     if (options.mode !== undefined && options.mode !== "plan" && options.mode !== "build") throw new Error("--mode must be plan or build.");
     if (options.thinking !== undefined && !["off", "minimal", "low", "medium", "high", "xhigh"].includes(options.thinking)) throw new Error("--thinking must be off, minimal, low, medium, high, or xhigh.");
@@ -676,6 +685,14 @@ program
     if (options.design !== undefined) patch.headerStyle = options.design as RayaConfig["headerStyle"];
     if (options.theme !== undefined) patch.theme = options.theme as ThemeId;
     if (options.neovim !== undefined) patch.neovim_mode = options.neovim === "true";
+    if (options.resetHotkeys) patch.hotkeys = { ...DEFAULT_HOTKEYS };
+    if (options.hotkey.length) {
+      const requested = assignments(options.hotkey, "--hotkey");
+      const allowed = new Set(Object.keys(DEFAULT_HOTKEYS));
+      const unknown = Object.keys(requested).find((action) => !allowed.has(action));
+      if (unknown) throw new Error(`Unknown hotkey action: ${unknown}. Use toggleMode, cancel, exit, or clearScreen.`);
+      patch.hotkeys = { ...(patch.hotkeys ?? config.hotkeys), ...requested };
+    }
     const next = updateConfig(patch);
     setActiveTheme(next.theme);
     if (next.neovim_mode) ensureNeovimConfig();
@@ -731,7 +748,7 @@ program
 
     const rebuildAgent = (nextSession = session): Agent => {
       const globalConfig = loadConfig();
-      nextSession.config = { ...nextSession.config, theme: globalConfig.theme, mcpServers: globalConfig.mcpServers };
+      nextSession.config = { ...nextSession.config, theme: globalConfig.theme, hotkeys: globalConfig.hotkeys, mcpServers: globalConfig.mcpServers };
       setActiveTheme(globalConfig.theme);
       const nextModel = getConfiguredModel(runtime, nextSession.config.provider, nextSession.config.model);
       const nextAgent = createRayaAgent({
@@ -765,8 +782,8 @@ program
         "/security                      choose Standard or Full access",
         "/sessions                     create, open, or delete a session",
         "/mcps                         show configured and enabled MCP servers",
-        "/skills                       show available skills",
-        "/About                        what Raya is and what she can do",
+        "/skills                       choose a skill to attach to the message",
+        "/about                        what Raya is and what she can do",
         "/status                       show current config",
         "/clear                        clear current session messages",
         "/exit                         quit"
@@ -939,7 +956,7 @@ program
 
       if (name === "status") {
         console.log(`Provider  : ${config.provider}`);
-        console.log(`Model     : ${config.model}`);
+        console.log(`Model     : ${config.model} (${config.thinkingLevel})`);
         console.log(`Mode      : ${config.mode === "plan" ? "Plan" : "Build"}`);
         console.log(`Security  : ${config.securityMode}`);
         console.log(`Design    : ${config.headerStyle}`);
@@ -960,7 +977,7 @@ program
       }
 
       if (name === "skills") {
-        for (const skill of listAvailableSkills()) console.log(`${skill.name.padEnd(22)} ${skill.path}`);
+        console.log("Use /skills and choose a skill to attach it to the current message.");
         return;
       }
 
@@ -1033,7 +1050,9 @@ program
         session: session.name,
         version: VERSION,
         contextTokens: 0,
-        contextWindow: model.contextWindow
+        contextWindow: model.contextWindow,
+        thinkingLevel: config.thinkingLevel,
+        hotkeys: config.hotkeys
       }, {
         onCommand: ({ agent: activeAgent, command }) => sessionLock.run(() => handleCommand(activeAgent, command)),
         onBeforePrompt: () => sessionLock.acquire(),
@@ -1050,6 +1069,10 @@ program
           detail: `${item.config.provider}/${item.config.model} · ${item.config.mode}`
         })),
         thinkingSuggestions: () => getSupportedThinkingLevels(model),
+        skillSuggestions: () => listAvailableSkills().map((skill) => ({
+          name: skill.name,
+          description: skill.description
+        })),
         themeSuggestions: () => {
           const globalTheme = loadConfig().theme;
           return [
@@ -1116,11 +1139,14 @@ program
             session: session.name,
             version: VERSION,
             contextTokens,
-            contextWindow: model.contextWindow
+            contextWindow: model.contextWindow,
+            thinkingLevel: config.thinkingLevel,
+            hotkeys: config.hotkeys
           };
         },
         neovimMode: config.neovim_mode,
-        neovimConfig: config.neovim_mode ? ensureNeovimConfig() : undefined
+        neovimConfig: config.neovim_mode ? ensureNeovimConfig() : undefined,
+        hotkeys: config.hotkeys
       });
     } finally {
       process.off("SIGINT", exitImmediately);

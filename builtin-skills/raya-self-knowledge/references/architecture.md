@@ -17,6 +17,16 @@ Raya is not one model. She is the orchestration layer around selectable model pr
 7. `src/skills/loader.ts` discovers skill metadata; `use_skill` loads complete instructions only when needed.
 8. Agent events stream to `src/tui/`, `src/web/`, or Telegram and sessions are persisted for later continuation.
 
+## Ownership Boundaries
+
+- CLI owns command parsing, provider login, process lifecycle, and assembly of interface-specific callbacks.
+- Config owns validation and backward-compatible migration. Callers should use `normalizeConfig`, `loadConfig`, or `updateConfig`, not trust stored JSON.
+- Agent assembly is the only place that should combine the system prompt, default tools, MCP tools, and subagent tool.
+- Tools own capability-specific validation and approval metadata; interfaces own how approval is collected.
+- Session storage owns message history and workspace binding. Memory owns durable cross-session facts. Do not use one as a silent replacement for the other.
+- MCP runtime owns external server connections and must close every client it successfully opened, including partial strict-mode failures.
+- Built-in skills are packaged source assets. Installed skill folders are user-owned and are not silently overwritten.
+
 ## Source Map
 
 - `src/agent/`: agent assembly, identity, workspace instructions, compaction, and context.
@@ -32,6 +42,8 @@ Raya is not one model. She is the orchestration layer around selectable model pr
 - `builtin-skills/`: skills copied into `~/.raya/skills` on first setup without replacing user-customized files.
 - `tests/`: behavioral and regression tests.
 
+Important entrypoints include `src/cli/index.ts`, `src/agent/create-agent.ts`, `src/agent/system-prompt.ts`, `src/tools/index.ts`, `src/mcp/client.ts`, `src/tui/app.ts`, `src/web/server.ts`, and `src/telegram/service.ts`.
+
 ## Operating Modes and Safety
 
 - Plan mode supports investigation and read-oriented work.
@@ -44,6 +56,8 @@ Raya is not one model. She is the orchestration layer around selectable model pr
 
 Raya normally stores config, auth, sessions, memory, scheduled work, plugins, and skills under `~/.raya`. Tests and smoke checks should set `RAYA_HOME` to an isolated temporary directory.
 
+`config.json` is non-secret configuration. `.env` is owner-only credential storage. `sessions.json`, `web.json`, `scheduled.json`, `USER.md`, `MEMORY.md`, transcript Markdown, skills, plugins, `AGENTS.md`, `SOUL.md`, and `neovim.json` are separate stores with different lifetimes and ownership.
+
 ## Extension Points
 
 - MCP servers add external tools, resources, and prompts through config.
@@ -54,3 +68,12 @@ Raya normally stores config, auth, sessions, memory, scheduled work, plugins, an
 ## Source Versus Installed Raya
 
 When source behavior differs from the `raya` command, compare `command -v raya`, `raya --version`, package metadata, and `node dist/cli/index.js`. Build before testing `dist`; reinstall the package only when the user actually wants the global installation updated.
+
+## Lifecycle Invariants
+
+- Enabled MCP servers connect once per running host and close during normal teardown.
+- A failed optional MCP server is reported once and does not prevent other servers from working.
+- A cancelled prompt rolls unfinished agent messages back before the next prompt.
+- Session saves are serialized where multiple interfaces may write.
+- Workspace writes remain under the resolved workspace even through symlinks.
+- Built-in assets may be bootstrapped, but user-customized files are preserved unless replacement was explicitly requested.

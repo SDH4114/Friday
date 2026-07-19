@@ -3,6 +3,7 @@ import { z } from "zod";
 import { ensureRayaHome, RAYA_CONFIG_PATH } from "./paths.js";
 import { writePrivateFileAtomic } from "../storage/atomic-file.js";
 import { ensureBuiltinSkills } from "../skills/bootstrap.js";
+import { DEFAULT_HOTKEYS, HotkeysSchema } from "../tui/hotkeys.js";
 
 const LocalModelSchema = z.object({
   provider: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/),
@@ -30,11 +31,25 @@ const McpStdioServerSchema = McpCommonSchema.extend({
 
 const McpHttpServerSchema = McpCommonSchema.extend({
   transport: z.literal("http"),
-  url: z.string().url(),
+  url: z.string().url().refine((value) => value.startsWith("http://") || value.startsWith("https://"), "MCP URL must use http or https"),
   headers: z.record(z.string(), z.string()).default({})
 });
 
-const McpServerSchema = z.discriminatedUnion("transport", [McpStdioServerSchema, McpHttpServerSchema]);
+const McpSseServerSchema = McpCommonSchema.extend({
+  transport: z.literal("sse"),
+  url: z.string().url().refine((value) => value.startsWith("http://") || value.startsWith("https://"), "MCP URL must use http or https"),
+  headers: z.record(z.string(), z.string()).default({})
+});
+
+const McpServerSchema = z.preprocess((value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const raw = { ...value as Record<string, unknown> };
+  if (raw.transport === undefined && typeof raw.type === "string") raw.transport = raw.type;
+  if (raw.transport === undefined && typeof raw.command === "string") raw.transport = "stdio";
+  if (raw.transport === undefined && typeof raw.url === "string") raw.transport = "http";
+  delete raw.type;
+  return raw;
+}, z.discriminatedUnion("transport", [McpStdioServerSchema, McpHttpServerSchema, McpSseServerSchema]));
 
 const ConfigSchema = z.object({
   provider: z.string().default("openai-codex"),
@@ -47,6 +62,7 @@ const ConfigSchema = z.object({
   headerStyle: z.enum(["small", "large"]).default("small"),
   theme: z.enum(["ocean", "sunset"]).default("ocean"),
   neovim_mode: z.boolean().default(false),
+  hotkeys: HotkeysSchema.default(DEFAULT_HOTKEYS),
   localModels: z.array(LocalModelSchema).default([]),
   piPackages: z.array(z.string().min(1)).default([]),
   mcpServers: z.record(z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/), McpServerSchema).default({}),

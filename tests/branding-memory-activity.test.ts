@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { advanceSessionDeleteKey, renderLargeAppleWord, renderStartupDashboard, sessionDeleteDescription } from "../src/tui/app.js";
+import { advanceSessionDeleteKey, commandSuggestions, fitSuggestionLine, modelStatusLabel, renderLargeAppleWord, renderStartupDashboard, sessionDeleteDescription } from "../src/tui/app.js";
 import { formatToolActivity } from "../src/tui/render-events.js";
 import { theme } from "../src/tui/theme.js";
 import { renderMarkdown } from "../src/tui/markdown.js";
@@ -42,8 +42,8 @@ test("startup dashboard is Raya-specific, responsive, and geometrically aligned"
   assert.ok(rayaRow && appleRow);
   const leftColumnWidth = wide[1]!.indexOf("│", 1) - 1;
   const leftCell = (line: string): string => line.slice(2, 2 + leftColumnWidth);
-  const visualCenter = (line: string, text: string): number => leftCell(line).indexOf(text) + visibleWidth(text) / 2;
-  assert.equal(visualCenter(rayaRow, "◢◤  RAYA  ◥◣"), visualCenter(appleRow, "A.P.P.L.E."));
+  assert.equal(leftCell(rayaRow).indexOf("◢◤  RAYA  ◥◣"), 0);
+  assert.equal(leftCell(appleRow).indexOf("A.P.P.L.E."), 0);
 
   const fullTerminal = renderStartupDashboard(info, 160);
   assert.ok(fullTerminal.every((line) => visibleWidth(line) === 160));
@@ -56,6 +56,39 @@ test("startup dashboard is Raya-specific, responsive, and geometrically aligned"
   assert.ok(narrow.every((line) => visibleWidth(line) === 72));
   assert.doesNotMatch(narrow.join("\n"), /┴/);
 
+});
+
+test("model status includes the current reasoning level", () => {
+  assert.equal(modelStatusLabel({ model: "GPT-5.5", thinkingLevel: "medium" }), "GPT-5.5 (medium)");
+  assert.equal(modelStatusLabel({ model: "GPT-5.5" }), "GPT-5.5");
+});
+
+test("skills command opens a selectable attachment list and about stays lowercase", () => {
+  const skills = commandSuggestions(
+    "/skills ", 8, () => [], () => [], () => [], () => [], () => [],
+    () => [{ name: "debugging", description: "Diagnose failures" }]
+  );
+  assert.equal(skills[0]?.selectable, false);
+  assert.deepEqual(skills[1], {
+    value: "@skill:debugging",
+    label: "debugging",
+    description: "Diagnose failures",
+    needsArgument: true
+  });
+  const about = commandSuggestions("/abo", 4);
+  assert.equal(about[0]?.value, "/about");
+  assert.equal(about.some((item) => item.value === "/About"), false);
+});
+
+test("long skill descriptions fit one physical terminal line", () => {
+  const fitted = fitSuggestionLine(
+    "excalidraw-diagram-generator",
+    "Generate Excalidraw diagrams from natural language descriptions and very long architecture requests.",
+    80
+  );
+  assert.equal(visibleWidth(`› ${fitted.label} ${fitted.description}`) <= 80, true);
+  assert.match(fitted.label, /…/);
+  assert.match(fitted.description, /…/);
 });
 
 test("all semantic interface colors resolve to the blue palette", () => {

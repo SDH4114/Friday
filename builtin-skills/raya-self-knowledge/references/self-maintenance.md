@@ -17,6 +17,8 @@
 5. Keep secrets out of logs, config, skills, snapshots, and test fixtures.
 6. Preserve old config and package behavior unless a migration is deliberate and tested.
 7. Avoid retry loops and repeated status output; aggregate recurring failures and retry with bounded backoff where appropriate.
+8. For TUI input, test raw bytes and parsed keypress events; terminal Escape and control chords can arrive through both paths.
+9. For MCP, test config normalization, connection failure cleanup, tool safety, stdio end to end, and every supported HTTP-family transport when the environment permits sockets.
 
 ## Verify
 
@@ -30,6 +32,8 @@ npm pack --dry-run
 ```
 
 Also run a user-facing command with an isolated `RAYA_HOME` when the behavior touches setup, config, skills, sessions, MCP, or the terminal interface. Use `git diff --check` and inspect the final diff.
+
+For a source checkout, smoke `node dist/cli/index.js --help`, `status`, relevant `config` mutations, and `mcp test` against a deterministic fixture. Do not use the globally installed `raya` as proof of an uninstalled source change.
 
 ## Improve Through Skills
 

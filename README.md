@@ -64,9 +64,20 @@ raya config --theme ocean
 raya config --theme sunset
 ```
 
-The input prompt shows `[Plan]` or `[Build]`; press Tab at any time to switch modes for the current session only. Existing input and cursor position are preserved. Outside a menu, plain Up/Down arrows move through earlier submitted prompts like a normal terminal and restore the unfinished draft when you return to the newest position. When a `/` command menu is open, those same arrows move through its choices instead, so command navigation is unchanged. Plan exposes only file-reading tools and a restricted set of simple, read-only shell inspection commands. Build enables file and app changes, but every consequential action shows an **Accept / Refuse** approval picker (arrow keys plus Enter). Start a line with `!` to enter `[Term]` and run that shell command directly in your terminal—the command is never sent to Raya or saved in its conversation. Type `/` anywhere else in the input line to open the main slash-command dropdown. A command-specific dropdown opens only after entering `/models`, `/providers`, `/sessions`, `/thinking`, `/theme`, or `/security` and pressing Enter. `/models` and `/providers` contain the complete built-in and locally configured catalogs and scroll around the selected row. Use the Up/Down arrow keys to move, Enter to select, and Escape to close any open list. While Raya is generating or running tools, Escape aborts the current run and rolls its unfinished messages out of the session. In `/sessions`, Enter opens the selected session; pressing `dd` on it requests deletion and then shows an **Accept / Refuse** confirmation. `Ctrl+C` exits immediately and prints `Bye bye`. A permanent footer below the input shows context usage, active model, working directory, and Raya version.
+The input prompt shows `[Plan]` or `[Build]`; the default Tab hotkey switches modes for the current session while preserving the input and cursor. Outside a menu, plain Up/Down arrows move through earlier submitted prompts and restore the unfinished draft at the newest position. Inside a `/` menu they move through choices. Plan exposes investigation-oriented tools; Build enables file and app changes, with an **Accept / Refuse** picker for consequential actions in Standard security. Start a line with `!` to run it directly in your terminal without sending it to Raya or saving it in the conversation. Type `/` elsewhere to open the command dropdown. Enter opens or selects, the cancel hotkey closes a menu or aborts an active run and rolls back unfinished messages, and the exit hotkey quits with `Bye bye`. In `/sessions`, `dd` requests deletion and then shows confirmation. A permanent footer shows context usage, the active model with its reasoning level such as `GPT-5.5 (medium)`, working directory, and Raya version. Changing `/thinking` updates this footer immediately.
 
-The startup screen is a responsive Raya dashboard: identity and live session state appear beside Raya-specific workflow guidance and controls. It becomes a stacked panel in narrow terminals. Use `raya config --design large` for the expanded ASCII identity panel, or `raya config --design small` for the compact core mark.
+Core TUI hotkeys are configurable and shown with their active values on the startup dashboard and in `raya status`. Chords are case-insensitive and support `ctrl`, `meta` (Option on macOS), `shift`, named keys, letters, digits, and `F1`–`F12`. Bindings must be unique.
+
+```bash
+raya config --hotkey toggleMode=ctrl+m
+raya config --hotkey cancel=ctrl+x --hotkey exit=ctrl+q
+raya config --hotkey clearScreen=meta+l
+raya config --reset-hotkeys
+```
+
+The defaults are `tab`, `escape`, `ctrl+c`, and `ctrl+l` for `toggleMode`, `cancel`, `exit`, and `clearScreen` respectively. They are stored under `hotkeys` in `~/.raya/config.json`.
+
+The startup screen is a responsive Raya dashboard: the Raya logo is aligned to the left with live session state below it, beside Raya-specific workflow guidance and the currently configured controls. It becomes a stacked panel in narrow terminals. Use `raya config --design large` for the expanded ASCII identity panel, or `raya config --design small` for the compact core mark.
 
 Neovim input is optional. Enable it with `raya config --neovim true` and disable it with `raya config --neovim false`. When enabled, the single-line prompt starts in `NORMAL` mode and displays the current `NORMAL`, `INSERT`, `VISUAL`, or `REPLACE` state. It supports Unicode/grapheme-safe motions and counts, `i/a/I/A/gI/o/O`, `h/l/w/W/b/B/e/E/0/^/$/gg/G`, `f/F/t/T/;/,`, `d/c/y` operators, combined operator counts, `dd/cc/yy`, word and delimiter text objects such as `diw`, `daw`, `ci"`, and `da(`, `x/X/D/C/Y/s/S`, visual and visual-line selection, `p/P`, `r/R`, `u`, `Ctrl+R`, `.`, `~`, and prompt history through `j/k`. Insert sessions are grouped into one undo operation. `/` enters Insert mode and opens Raya's command palette. The complete default key map is created at `~/.raya/neovim.json` when Neovim mode is first enabled and is automatically extended with new defaults without replacing custom bindings. Existing `vim_mode` and `~/.raya/vim.json` settings are imported automatically on first use.
 
@@ -82,10 +93,12 @@ Useful interactive commands:
 /sessions
 /mcps
 /skills
-/About
+/about
 /clear
 /exit
 ```
+
+`/skills` opens a searchable dropdown of all built-in, user, workspace, and package skills. Selecting one inserts a visible `@skill:<name>` marker into the current input instead of sending the command immediately, so you can finish the request and attach that skill to the same message. Raya treats the marker as an explicit instruction to load the selected skill with `use_skill` before answering. The information command is lowercase: `/about`.
 
 Direct shortcuts:
 
@@ -184,7 +197,9 @@ Blocked commands are checked before Raya invokes the shell, including common wra
 
 ## Skills
 
-Raya ships with built-in `debugging`, `implementation`, `project-audit`, `web-research`, `raya-self-knowledge`, and `create-raya-skills` skills. The self-knowledge package documents Raya's purpose, runtime, source map, safety boundaries, and repair workflow. The installer copies built-ins into `~/.raya/skills/` and the first Raya startup performs the same sync as a fallback. Existing folders are never replaced, so user edits remain yours. A later Raya update only installs newly added skills that are missing.
+Raya ships with built-in `debugging`, `implementation`, `project-audit`, `web-research`, `raya-self-knowledge`, and `create-raya-skills` skills. The expanded self-knowledge package is Raya's internal map of her identity, runtime flow, source ownership, interfaces, tools, configuration, hotkeys, MCP formats, persistent stores, safety model, honest limitations, and self-maintenance workflow. It explicitly separates Raya's orchestration from the selected model and separates executable MCP capabilities from instruction-only skills.
+
+The installer copies built-ins into `~/.raya/skills/` and the first Raya startup performs the same sync as a fallback. Existing folders are never replaced automatically, so user edits remain yours. A later Raya update only installs missing skills. Use the explicit force command when you deliberately want every installed built-in, including `raya-self-knowledge`, replaced by the package's current version.
 
 Raya discovers `SKILL.md` metadata from both `~/.raya/skills/<skill>/SKILL.md` and `<workspace>/.agents/skills/<skill>/SKILL.md`. Only the compact catalog is added at session start; complete instructions and requested references are loaded through `use_skill` when relevant. This keeps the model context small and makes skill activation visible in the TUI. Skills are context instructions, never executable code or additional permissions by themselves.
 
@@ -193,13 +208,14 @@ In Build mode Raya can create a persistent skill with the approval-aware `create
 ```bash
 raya skills list       # built-in, user, workspace, and package skills
 raya skills sync       # install any missing built-in skills
+raya skills sync --force # replace installed built-ins with packaged versions
 ```
 
 At startup Raya prefers `~/.raya/AGENTS.md`; if it is absent, she walks upward from the current directory and loads the nearest `AGENTS.md`. `SOUL.md` follows the same independent fallback algorithm.
 
 ## MCP servers
 
-Raya is an MCP client for local `stdio` servers and remote Streamable HTTP servers. Enabled servers connect once when Raya starts and close cleanly when Raya exits. Their tools are exposed with collision-safe names such as `mcp_filesystem_read_file`; MCP resources and prompts are available through `mcp_list_resources`, `mcp_read_resource`, `mcp_list_prompts`, and `mcp_get_prompt`. Server instructions are included in the agent context. The same connected MCP tools are available in the terminal, Raya Web, Telegram gateway, and subagents.
+Raya is an MCP client for local `stdio`, remote Streamable HTTP, and legacy SSE servers. Enabled servers connect once when Raya starts and close cleanly when Raya exits, including strict diagnostic runs that only partially connect. Their paginated tools are exposed with collision-safe names such as `mcp_filesystem_read_file`; MCP resources and prompts are available through `mcp_list_resources`, `mcp_read_resource`, `mcp_list_prompts`, and `mcp_get_prompt`. Server instructions are included in the agent context. The same connected MCP tools are available in the terminal, Raya Web, Telegram gateway, and subagents.
 
 Add and test a local server:
 
@@ -221,6 +237,15 @@ raya mcp add company \
   --header 'Authorization=Bearer ${MY_MCP_TOKEN}'
 raya mcp test company
 ```
+
+For an older SSE endpoint, add `--transport sse`. Streamable HTTP remains the default:
+
+```bash
+raya mcp add legacy --url https://mcp.example.com/sse --transport sse
+raya mcp test legacy
+```
+
+Raya also normalizes common MCP JSON copied from other clients: `type` may be used instead of `transport`, and a missing transport is inferred as `stdio` from `command` or `http` from `url`. URL transports are restricted to HTTP(S). Environment placeholders work in commands, arguments, paths, environment values, URLs, and headers.
 
 Manage configured servers:
 
@@ -259,7 +284,7 @@ Servers are stored visibly under `mcpServers` in `~/.raya/config.json`:
 }
 ```
 
-`approval` may be `always`, `writes` (default), or `never`. Plan mode only permits MCP tools that the server marks read-only. In Standard Build mode, tools not marked read-only ask for the normal Raya approval unless the server is configured with `approval: "never"`. Full access skips interactive approvals. A server that fails to connect is reported once and does not prevent Raya or the other MCP servers from starting.
+`approval` may be `always`, `writes` (default), or `never`. Plan mode only permits MCP tools that the server marks read-only. In Standard Build mode, tools not marked read-only ask for the normal Raya approval unless the server is configured with `approval: "never"`. Full access skips interactive approvals. A server that fails to connect is reported once and does not prevent Raya or the other MCP servers from starting. `raya mcp test <name>` is strict: it returns a failing exit status and closes any other connection opened during the diagnostic.
 
 ## Subagents and pi packages
 
@@ -302,6 +327,7 @@ For a safer remote path, every dangerous tool action requested from Telegram—s
 - `src/agent/` — system context and `pi-agent-core` loop wiring.
 - `src/tools/` — extensible tool registry.
 - `src/tui/` — streaming terminal UI using `pi-tui` utilities.
+- `src/tui/hotkeys.ts` — validated configurable key chords and matching.
 - `src/telegram/service.ts` — same-process Telegram long polling and approval buttons.
 - `src/mcp/client.ts` — MCP transports, capability discovery, tool adapters, resources, prompts, and lifecycle.
 - `src/skills/` and `builtin-skills/` — skill discovery and first-run built-in installation.
