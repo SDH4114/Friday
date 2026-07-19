@@ -1,5 +1,5 @@
 import type { ImageContent } from "@earendil-works/pi-ai/compat";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -134,10 +134,38 @@ export function parseMacClipboardOutput(stdout: string): ClipboardPayload | unde
 }
 
 export async function readClipboard(): Promise<ClipboardPayload | undefined> {
-  if (process.platform !== "darwin") return undefined;
-  const { stdout } = await execFileAsync("osascript", ["-l", "JavaScript", "-e", MACOS_CLIPBOARD_SCRIPT], {
-    encoding: "utf8",
-    maxBuffer: 40 * 1024 * 1024
+  if (process.platform === "darwin") {
+    const { stdout } = await execFileAsync("osascript", ["-l", "JavaScript", "-e", MACOS_CLIPBOARD_SCRIPT], {
+      encoding: "utf8",
+      maxBuffer: 40 * 1024 * 1024
+    });
+    return parseMacClipboardOutput(stdout);
+  }
+  if (process.platform === "win32") {
+    const { stdout } = await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "Get-Clipboard -Raw"], {
+      encoding: "utf8",
+      maxBuffer: MAX_CLIPBOARD_BYTES
+    });
+    const text = normalizePastedText(stdout);
+    return text ? { kind: "text", text } : undefined;
+  }
+  return undefined;
+}
+
+export async function writeClipboardText(text: string): Promise<void> {
+  const command = process.platform === "darwin"
+    ? { executable: "pbcopy", args: [] }
+    : process.platform === "win32"
+      ? { executable: "clip.exe", args: [] }
+      : process.env.WAYLAND_DISPLAY
+        ? { executable: "wl-copy", args: [] }
+        : { executable: "xclip", args: ["-selection", "clipboard"] };
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(command.executable, command.args, { stdio: ["pipe", "ignore", "pipe"] });
+    let error = "";
+    child.stderr.on("data", (chunk) => { error += String(chunk); });
+    child.on("error", reject);
+    child.on("close", (code) => code === 0 ? resolve() : reject(new Error(error.trim() || `${command.executable} exited ${code}`)));
+    child.stdin.end(text);
   });
-  return parseMacClipboardOutput(stdout);
 }

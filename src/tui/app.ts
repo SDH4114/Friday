@@ -8,7 +8,7 @@ import { color, theme } from "./theme.js";
 import { createNeovimState, ensureNeovimConfig, handleNeovimKey, type NeovimConfig, type NeovimState } from "./neovim.js";
 import { DEFAULT_HOTKEYS, formatHotkey, matchesHotkey, type TuiHotkeys } from "./hotkeys.js";
 import { RAYA_SLASH_COMMANDS } from "../agent/capabilities.js";
-import { insertClipboardImage, insertClipboardText, readClipboard, removeImageMarker } from "./clipboard.js";
+import { insertClipboardImage, insertClipboardText, readClipboard, removeImageMarker, writeClipboardText } from "./clipboard.js";
 import { activeWorkspaceMentionStart, attachWorkspaceMention, listWorkspaceMentions, type WorkspaceMention } from "./workspace-mentions.js";
 
 let activeNotificationHandler: ((message: string) => void) | undefined;
@@ -358,6 +358,83 @@ export function lineWordEnd(value: string, cursor: number): number {
   return index;
 }
 
+const promptGraphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+function promptGraphemeBoundaries(value: string): number[] {
+  return [0, ...[...promptGraphemeSegmenter.segment(value)].map((item) => item.index + item.segment.length)];
+}
+
+export function promptPreviousCharacter(value: string, cursor: number): number {
+  const safeCursor = Math.max(0, Math.min(cursor, value.length));
+  const boundaries = promptGraphemeBoundaries(value);
+  for (let index = boundaries.length - 1; index >= 0; index -= 1) {
+    if (boundaries[index]! < safeCursor) return boundaries[index]!;
+  }
+  return 0;
+}
+
+export function promptNextCharacter(value: string, cursor: number): number {
+  const safeCursor = Math.max(0, Math.min(cursor, value.length));
+  return promptGraphemeBoundaries(value).find((boundary) => boundary > safeCursor) ?? value.length;
+}
+
+export function promptLineStart(value: string, cursor: number): number {
+  const safeCursor = Math.max(0, Math.min(cursor, value.length));
+  return safeCursor === 0 ? 0 : value.lastIndexOf("\n", safeCursor - 1) + 1;
+}
+
+export function promptLineEnd(value: string, cursor: number): number {
+  const safeCursor = Math.max(0, Math.min(cursor, value.length));
+  const newline = value.indexOf("\n", safeCursor);
+  return newline === -1 ? value.length : newline;
+}
+
+function promptCharacterClass(character: string): "space" | "word" | "punctuation" {
+  if (/\s/u.test(character)) return "space";
+  return /[\p{L}\p{N}_]/u.test(character) ? "word" : "punctuation";
+}
+
+export function promptWordStart(value: string, cursor: number): number {
+  let index = Math.max(0, Math.min(cursor, value.length));
+  while (index > 0) {
+    const previous = promptPreviousCharacter(value, index);
+    if (promptCharacterClass(value.slice(previous, index)) !== "space") break;
+    index = previous;
+  }
+  if (index === 0) return 0;
+  let previous = promptPreviousCharacter(value, index);
+  const targetClass = promptCharacterClass(value.slice(previous, index));
+  while (index > 0) {
+    previous = promptPreviousCharacter(value, index);
+    if (promptCharacterClass(value.slice(previous, index)) !== targetClass) break;
+    index = previous;
+  }
+  return index;
+}
+
+export function promptWordEnd(value: string, cursor: number): number {
+  let index = Math.max(0, Math.min(cursor, value.length));
+  while (index < value.length) {
+    const next = promptNextCharacter(value, index);
+    if (promptCharacterClass(value.slice(index, next)) !== "space") break;
+    index = next;
+  }
+  if (index >= value.length) return value.length;
+  let next = promptNextCharacter(value, index);
+  const targetClass = promptCharacterClass(value.slice(index, next));
+  while (index < value.length) {
+    next = promptNextCharacter(value, index);
+    if (promptCharacterClass(value.slice(index, next)) !== targetClass) break;
+    index = next;
+  }
+  return index;
+}
+
+export function promptSelectionRange(cursor: number, anchor?: number): { start: number; end: number } | undefined {
+  if (anchor === undefined || anchor === cursor) return undefined;
+  return { start: Math.min(anchor, cursor), end: Math.max(anchor, cursor) };
+}
+
 export function movePromptCursorVertically(
   value: string,
   cursor: number,
@@ -390,22 +467,38 @@ export function deletePromptLine(value: string, cursor: number): {
   const lineEnd = nextNewline === -1 ? value.length : nextNewline;
   const deleteStart = nextNewline === -1 && lineStart > 0 ? lineStart - 1 : lineStart;
   const deleteEnd = nextNewline === -1 ? lineEnd : lineEnd + 1;
-  const removedImageIndexes = [...value.slice(deleteStart, deleteEnd).matchAll(/\[Image (\d+)\]/gu)]
+  return deletePromptRange(value, deleteStart, deleteEnd);
+}
+
+export function deletePromptRange(value: string, start: number, end: number): {
+  value: string;
+  cursor: number;
+  removedImageIndexes: number[];
+} {
+  const safeStart = Math.max(0, Math.min(start, end, value.length));
+  const safeEnd = Math.max(safeStart, Math.min(Math.max(start, end), value.length));
+  const removedImageIndexes = [...value.slice(safeStart, safeEnd).matchAll(/\[Image (\d+)\]/gu)]
     .map((match) => Number(match[1]) - 1)
     .filter((index, position, indexes) => index >= 0 && indexes.indexOf(index) === position)
     .sort((left, right) => left - right);
-  const withoutLine = `${value.slice(0, deleteStart)}${value.slice(deleteEnd)}`;
-  const renumbered = withoutLine.replace(/\[Image (\d+)\]/gu, (marker, rawNumber: string) => {
+  const withoutRange = `${value.slice(0, safeStart)}${value.slice(safeEnd)}`;
+  const renumbered = withoutRange.replace(/\[Image (\d+)\]/gu, (marker, rawNumber: string) => {
     const number = Number(rawNumber);
     const removedBefore = removedImageIndexes.filter((index) => index + 1 < number).length;
     return removedBefore ? `[Image ${number - removedBefore}]` : marker;
   });
-  return { value: renumbered, cursor: Math.min(deleteStart, renumbered.length), removedImageIndexes };
+  return { value: renumbered, cursor: Math.min(safeStart, renumbered.length), removedImageIndexes };
 }
 
 export function isDeletePromptLineKey(key: { name?: string; ctrl?: boolean; sequence?: string }): boolean {
   return key.sequence === "\x08"
     || (key.ctrl === true && (key.name === "h" || key.name === "backspace" || key.name === "delete"));
+}
+
+function isSuperModifiedKey(key: { sequence?: string }): boolean {
+  const sequence = key.sequence ?? "";
+  return /\x1b\[(?:1;)?(?:9|10)[A-Za-z~]$/u.test(sequence)
+    || /\x1b\[[0-9:]+;(?:9|10)u$/u.test(sequence);
 }
 
 /** A compact prompt editor with terminal dropdowns for commands and workspace mentions. */
@@ -478,6 +571,43 @@ export function multilinePromptViewport(
   };
 }
 
+function selectedMultilinePromptRows(value: string, cursor: number, anchor: number, width: number): string[] {
+  const viewport = multilinePromptViewport(value, cursor, width);
+  const range = promptSelectionRange(cursor, anchor);
+  if (!range) return viewport.rows;
+  const lines = value.split("\n");
+  const beforeCursor = value.slice(0, cursor).split("\n");
+  const currentLine = beforeCursor.length - 1;
+  const visibleLineCount = Math.max(MAX_VISIBLE_INPUT_LINES, 1);
+  const start = Math.max(0, Math.min(currentLine - Math.floor(visibleLineCount / 2), lines.length - visibleLineCount));
+  const end = Math.min(start + visibleLineCount, lines.length);
+  const rowOffset = start > 0 ? 1 : 0;
+  const offsets: number[] = [];
+  let offset = 0;
+  for (const line of lines) {
+    offsets.push(offset);
+    offset += line.length + 1;
+  }
+  const rows = [...viewport.rows];
+  for (let lineIndex = start; lineIndex < end; lineIndex += 1) {
+    const line = lines[lineIndex] ?? "";
+    if (visibleWidth(displayPromptValue(line)) > width) continue;
+    const lineStart = offsets[lineIndex] ?? 0;
+    const lineEnd = lineStart + line.length;
+    const localStart = Math.max(0, Math.min(line.length, range.start - lineStart));
+    const localEnd = Math.max(0, Math.min(line.length, range.end - lineStart));
+    const selectsCharacters = localStart < localEnd && range.end > lineStart && range.start < lineEnd;
+    const selectsNewline = lineIndex < lines.length - 1 && range.start <= lineEnd && range.end > lineEnd;
+    if (!selectsCharacters && !selectsNewline) continue;
+    const before = displayPromptValue(line.slice(0, localStart));
+    const selected = displayPromptValue(line.slice(localStart, localEnd));
+    const after = displayPromptValue(line.slice(localEnd));
+    const newlineMarker = selectsNewline ? "\x1b[7m \x1b[27m" : "";
+    rows[rowOffset + lineIndex - start] = `${before}${selected ? `\x1b[7m${selected}\x1b[27m` : ""}${after}${newlineMarker}`;
+  }
+  return rows;
+}
+
 export function styleImageMarkers(value: string): string {
   return value.replace(/\[Image \d+\]/gu, (marker) => `\x1b[7m${marker}\x1b[27m`);
 }
@@ -486,6 +616,39 @@ const LEGACY_SHIFT_ENTER_SEQUENCE = "\x1b[27;2;13~";
 const LEGACY_SHIFT_ENTER_PREFIX = "\x1b[27;2;";
 const LEGACY_SHIFT_ENTER_SUFFIX = "13~";
 const SHIFT_ENTER_SEQUENCES = ["\n", "\x1b\r", "\x1b[13;2u", "\x1b[13;2~", LEGACY_SHIFT_ENTER_SEQUENCE] as const;
+
+type DecodedTerminalKey = {
+  text: string;
+  key: { name?: string; ctrl: boolean; meta: boolean; shift: boolean; sequence: string };
+};
+
+const KITTY_FUNCTION_KEYS = new Map<number, string>([
+  [57348, "insert"], [57349, "delete"], [57350, "left"], [57351, "right"],
+  [57352, "up"], [57353, "down"], [57354, "pageup"], [57355, "pagedown"],
+  [57356, "home"], [57357, "end"]
+]);
+
+export function decodeTerminalKeySequence(sequence: string): DecodedTerminalKey | undefined {
+  const csiU = sequence.match(/^\x1b\[(\d+)(?::\d+)?;(\d+)(?::\d+)?u$/u);
+  const modifyOtherKeys = sequence.match(/^\x1b\[27;(\d+);(\d+)~$/u);
+  const rawCodepoint = csiU?.[1] ?? modifyOtherKeys?.[2];
+  const rawModifier = csiU?.[2] ?? modifyOtherKeys?.[1];
+  if (!rawCodepoint || !rawModifier) return undefined;
+  const codepoint = Number(rawCodepoint);
+  const modifierBits = Math.max(Number(rawModifier) - 1, 0);
+  const shift = (modifierBits & 1) !== 0;
+  const alt = (modifierBits & 2) !== 0;
+  const ctrl = (modifierBits & 4) !== 0;
+  const superKey = (modifierBits & 8) !== 0;
+  const protocolMeta = (modifierBits & 32) !== 0;
+  const character = codepoint >= 0 && codepoint <= 0x10ffff ? String.fromCodePoint(codepoint) : "";
+  const specialName = KITTY_FUNCTION_KEYS.get(codepoint)
+    ?? ({ 8: "backspace", 9: "tab", 13: "enter", 27: "escape", 127: "backspace" } as Record<number, string>)[codepoint];
+  const name = specialName ?? (character.length === 1 ? character.toLowerCase() : undefined);
+  const meta = alt || superKey || protocolMeta;
+  const text = specialName || ctrl || meta ? "" : shift ? character.toUpperCase() : character;
+  return { text, key: { name, ctrl, meta, shift, sequence } };
+}
 
 export function isShiftEnterSequence(raw: string): boolean {
   return SHIFT_ENTER_SEQUENCES.some((sequence) => raw === sequence);
@@ -601,6 +764,7 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
   let visible = 0;
   let killBuffer = "";
   let verticalCursorColumn: number | undefined;
+  let selectionAnchor: number | undefined;
   let historyState: PromptHistoryState = { index: history.length, draft: value };
   let deleteArmedValue: string | undefined;
   let menuDismissed = false;
@@ -608,7 +772,7 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
   let bracketedPaste = "";
   let collectingBracketedPaste = false;
   let suppressKeypressesForDataChunk = false;
-  let legacyShiftEnterSuffix: string | undefined;
+  let modifyOtherKeysCandidate: { modifier: string; suffix: string } | undefined;
   let clipboardPastePending = false;
   let workspaceMentionCache: WorkspaceMention[] | undefined;
   let renderedCursorRow = 0;
@@ -632,7 +796,9 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
     output.write(`\r${renderedCursorRow > 0 ? `\x1b[${renderedCursorRow}A` : ""}`);
     const inputWidth = Math.max(terminalWidth - visibleWidth(label()), 1);
     const multilineViewport = multilinePromptViewport(value, cursor, inputWidth);
-    let displayRows = multilineViewport.rows;
+    let displayRows = selectionAnchor === undefined || neovimState
+      ? multilineViewport.rows
+      : selectedMultilinePromptRows(value, cursor, selectionAnchor, inputWidth);
     const entireValueFits = !value.includes("\n") && visibleWidth(displayPromptValue(value)) <= inputWidth;
     if (entireValueFits && neovimState?.mode === "VISUAL" && neovimState.selectionStart !== undefined && value.length) {
       const start = Math.min(neovimState.selectionStart, cursor);
@@ -701,9 +867,18 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
   };
 
   const insertPastedText = (text: string): void => {
+    const selection = promptSelectionRange(cursor, selectionAnchor);
+    if (selection) {
+      const deleted = deletePromptRange(value, selection.start, selection.end);
+      value = deleted.value;
+      cursor = deleted.cursor;
+      for (const imageIndex of [...deleted.removedImageIndexes].reverse()) images.splice(imageIndex, 1);
+    }
     const next = insertClipboardText(value, cursor, text);
     value = next.value;
     cursor = next.cursor;
+    selectionAnchor = undefined;
+    verticalCursorColumn = undefined;
     selected = 0;
     menuDismissed = false;
     render();
@@ -720,10 +895,19 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
       } else if (payload.kind === "text") {
         insertPastedText(payload.text);
       } else {
+        const selection = promptSelectionRange(cursor, selectionAnchor);
+        if (selection) {
+          const deleted = deletePromptRange(value, selection.start, selection.end);
+          value = deleted.value;
+          cursor = deleted.cursor;
+          for (const imageIndex of [...deleted.removedImageIndexes].reverse()) images.splice(imageIndex, 1);
+        }
         images.push(payload.image);
         const next = insertClipboardImage(value, cursor, images.length);
         value = next.value;
         cursor = next.cursor;
+        selectionAnchor = undefined;
+        verticalCursorColumn = undefined;
         selected = 0;
         menuDismissed = false;
         render();
@@ -740,6 +924,7 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
       const attached = attachWorkspaceMention(value, cursor, suggestion.workspaceMention.path, suggestion.workspaceMention.type);
       value = attached.value;
       cursor = attached.cursor;
+      selectionAnchor = undefined;
       selected = 0;
       menuDismissed = false;
       return;
@@ -748,6 +933,7 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
       const attached = attachSkillToPrompt(value, cursor, suggestion.value.slice("@skill:".length));
       value = attached.value;
       cursor = attached.cursor;
+      selectionAnchor = undefined;
       selected = 0;
       menuDismissed = false;
       return;
@@ -757,6 +943,7 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
     const insertion = `${suggestion.value}${addSpace || suggestion.needsArgument ? " " : ""}`;
     value = value.slice(0, start) + insertion + value.slice(cursor);
     cursor = start + insertion.length;
+    selectionAnchor = undefined;
     selected = 0;
     menuDismissed = false;
   };
@@ -771,12 +958,51 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
     menuDismissed = true;
     selected = 0;
     verticalCursorColumn = undefined;
+    selectionAnchor = undefined;
   };
 
-  const navigatePromptLine = (direction: -1 | 1): void => {
+  const moveEditorCursor = (nextCursor: number, extendSelection: boolean): void => {
+    if (extendSelection) selectionAnchor ??= cursor;
+    else selectionAnchor = undefined;
+    cursor = Math.max(0, Math.min(nextCursor, value.length));
+    if (selectionAnchor === cursor) selectionAnchor = undefined;
+  };
+
+  const navigatePromptLine = (direction: -1 | 1, extendSelection: boolean): void => {
     const next = movePromptCursorVertically(value, cursor, direction, verticalCursorColumn);
-    cursor = next.cursor;
+    moveEditorCursor(next.cursor, extendSelection);
     verticalCursorColumn = next.preferredColumn;
+  };
+
+  const deleteEditorRange = (start: number, end: number): void => {
+    const deleted = deletePromptRange(value, start, end);
+    value = deleted.value;
+    cursor = deleted.cursor;
+    selectionAnchor = undefined;
+    for (const imageIndex of [...deleted.removedImageIndexes].reverse()) images.splice(imageIndex, 1);
+  };
+
+  const deleteSelection = (): boolean => {
+    const selection = promptSelectionRange(cursor, selectionAnchor);
+    if (!selection) return false;
+    deleteEditorRange(selection.start, selection.end);
+    return true;
+  };
+
+  const copySelection = async (cut: boolean): Promise<void> => {
+    const selection = promptSelectionRange(cursor, selectionAnchor);
+    if (!selection) return;
+    const selectedText = value.slice(selection.start, selection.end);
+    try {
+      await writeClipboardText(selectedText);
+    } catch {
+      output.write(`\x1b]52;c;${Buffer.from(selectedText, "utf8").toString("base64")}\x07`);
+    }
+    if (settled || !cut) return;
+    deleteSelection();
+    selected = 0;
+    menuDismissed = false;
+    render();
   };
 
   let onKeypress: (text: string, key: { name?: string; ctrl?: boolean; meta?: boolean; shift?: boolean; sequence?: string }) => void;
@@ -810,6 +1036,9 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
         return;
       }
       if (hotkeys.exit === "ctrl+c" && bytes.length === 1 && bytes[0] === 0x03) {
+        if (!neovimState && promptSelectionRange(cursor, selectionAnchor)) {
+          return;
+        }
         finish(resolve, EXIT_SIGNAL, false);
         return;
       }
@@ -824,29 +1053,42 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
     };
     onKeypress = (text, key) => {
       if (isShiftEnterSequence(key.sequence ?? "")) {
-        legacyShiftEnterSuffix = undefined;
+        modifyOtherKeysCandidate = undefined;
         insertPastedText("\n");
         return;
       }
-      const legacyShiftEnter = advanceLegacyShiftEnterKeypress(legacyShiftEnterSuffix, key.sequence ?? text);
-      if (legacyShiftEnter.kind === "pending") {
-        legacyShiftEnterSuffix = legacyShiftEnter.suffix;
+      let decodedKey = decodeTerminalKeySequence(key.sequence ?? "");
+      const modifyOtherKeysPrefix = (key.sequence ?? "").match(/^\x1b\[27;(\d+);$/u);
+      if (!decodedKey && modifyOtherKeysPrefix) {
+        modifyOtherKeysCandidate = { modifier: modifyOtherKeysPrefix[1]!, suffix: "" };
         return;
       }
-      if (legacyShiftEnter.kind === "newline") {
-        legacyShiftEnterSuffix = undefined;
-        insertPastedText("\n");
-        return;
+      if (!decodedKey && modifyOtherKeysCandidate) {
+        modifyOtherKeysCandidate.suffix += key.sequence ?? text;
+        if (/^\d*$/u.test(modifyOtherKeysCandidate.suffix)) return;
+        if (/^\d+~$/u.test(modifyOtherKeysCandidate.suffix)) {
+          decodedKey = decodeTerminalKeySequence(`\x1b[27;${modifyOtherKeysCandidate.modifier};${modifyOtherKeysCandidate.suffix}`);
+          modifyOtherKeysCandidate = undefined;
+        } else {
+          const replay = modifyOtherKeysCandidate.suffix;
+          modifyOtherKeysCandidate = undefined;
+          if (replay) insertPastedText(replay);
+          return;
+        }
       }
-      if (legacyShiftEnter.kind === "replay") {
-        legacyShiftEnterSuffix = undefined;
-        if (legacyShiftEnter.text) insertPastedText(legacyShiftEnter.text);
+      if (decodedKey) {
+        text = decodedKey.text;
+        key = { ...key, ...decodedKey.key };
       }
-      if (suppressKeypressesForDataChunk || (key.ctrl && key.name === "v")) return;
-      if (clipboardPastePending && (key.name === "return" || key.name === "enter")) return;
+      if (suppressKeypressesForDataChunk) return;
+      if (clipboardPastePending && (key.name === "return" || key.name === "enter" || (key.ctrl && key.name === "v"))) return;
       const previousValue = value;
       if (key.name !== "up" && key.name !== "down") verticalCursorColumn = undefined;
       const suggestions = menuDismissed ? [] : commandSuggestions(value, cursor, options?.sessionSuggestions, options?.thinkingSuggestions, options?.providerSuggestions, options?.modelSuggestions, options?.themeSuggestions, options?.skillSuggestions, workspaceSuggestions);
+      if (!neovimState && (key.meta || key.ctrl) && key.name === "c" && promptSelectionRange(cursor, selectionAnchor)) {
+        void copySelection(false).catch((error) => notifyTui(`Could not copy selection: ${error instanceof Error ? error.message : String(error)}`));
+        return;
+      }
       if (matchesHotkey(text, key, hotkeys.exit)) {
         finish(resolve, EXIT_SIGNAL, false);
         return;
@@ -871,34 +1113,40 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
           return;
         }
       }
-      if (key.name === "up" && suggestions.length) {
+      if (key.name === "up" && suggestions.length && !key.shift && !key.ctrl && !key.meta) {
         verticalCursorColumn = undefined;
         selected = selectableIndex(suggestions, selected, -1);
         render();
         return;
       }
-      if (key.name === "down" && suggestions.length) {
+      if (key.name === "down" && suggestions.length && !key.shift && !key.ctrl && !key.meta) {
         verticalCursorColumn = undefined;
         selected = selectableIndex(suggestions, selected, 1);
         render();
         return;
       }
-      if (!suggestions.length && key.name === "up" && value.includes("\n")) {
-        navigatePromptLine(-1);
-        render();
-        return;
+      if (!neovimState && (key.name === "up" || key.name === "down")) {
+        const direction = key.name === "up" ? -1 : 1;
+        if (isSuperModifiedKey(key) || key.meta) {
+          moveEditorCursor(direction === -1 ? 0 : value.length, key.shift === true);
+          verticalCursorColumn = undefined;
+          render();
+          return;
+        }
+        if (value.includes("\n") || key.shift || key.ctrl) {
+          navigatePromptLine(direction, key.shift === true);
+          render();
+          return;
+        }
       }
-      if (!suggestions.length && key.name === "down" && value.includes("\n")) {
-        navigatePromptLine(1);
-        render();
-        return;
-      }
-      if (!suggestions.length && (key.name === "up" || (neovimState?.mode === "NORMAL" && (text === "k" || (key.ctrl && key.name === "p"))))) {
+      if (!suggestions.length && ((!neovimState && !key.shift && !key.ctrl && !key.meta && key.name === "up")
+        || (neovimState?.mode === "NORMAL" && (text === "k" || (key.ctrl && key.name === "p"))))) {
         navigateHistory(-1);
         render();
         return;
       }
-      if (!suggestions.length && (key.name === "down" || (neovimState?.mode === "NORMAL" && (text === "j" || (key.ctrl && key.name === "n"))))) {
+      if (!suggestions.length && ((!neovimState && !key.shift && !key.ctrl && !key.meta && key.name === "down")
+        || (neovimState?.mode === "NORMAL" && (text === "j" || (key.ctrl && key.name === "n"))))) {
         navigateHistory(1);
         render();
         return;
@@ -915,6 +1163,57 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
       }
       if (matchesHotkey(text, key, hotkeys.toggleMode)) {
         finish(resolve, `${MODE_TOGGLE_PREFIX}${JSON.stringify({ value, cursor, neovimMode: neovimState?.mode })}`, false);
+        return;
+      }
+      if (!neovimState && key.name === "escape" && selectionAnchor !== undefined) {
+        selectionAnchor = undefined;
+        render();
+        return;
+      }
+      if (!neovimState && (key.ctrl || key.meta) && key.name === "a") {
+        selectionAnchor = 0;
+        cursor = value.length;
+        verticalCursorColumn = undefined;
+        render();
+        return;
+      }
+      if (!neovimState && (key.meta || key.ctrl) && key.name === "v") {
+        void pasteFromClipboard();
+        return;
+      }
+      if (!neovimState && (key.meta || key.ctrl) && key.name === "x") {
+        if (!promptSelectionRange(cursor, selectionAnchor) && value) {
+          const start = promptLineStart(value, cursor);
+          const end = promptLineEnd(value, cursor);
+          selectionAnchor = start;
+          cursor = end < value.length ? end + 1 : end;
+        }
+        void copySelection(true).catch((error) => notifyTui(`Could not cut selection: ${error instanceof Error ? error.message : String(error)}`));
+        return;
+      }
+      if (!neovimState && (key.name === "left" || key.name === "right")) {
+        const forward = key.name === "right";
+        const selection = promptSelectionRange(cursor, selectionAnchor);
+        const nextCursor = selection && !key.shift && !key.ctrl && !key.meta
+          ? (forward ? selection.end : selection.start)
+          : isSuperModifiedKey(key)
+            ? (forward ? promptLineEnd(value, cursor) : promptLineStart(value, cursor))
+            : (key.ctrl || key.meta)
+              ? (forward ? promptWordEnd(value, cursor) : promptWordStart(value, cursor))
+              : (forward ? promptNextCharacter(value, cursor) : promptPreviousCharacter(value, cursor));
+        moveEditorCursor(nextCursor, key.shift === true);
+        verticalCursorColumn = undefined;
+        render();
+        return;
+      }
+      if (!neovimState && (key.name === "home" || key.name === "end")) {
+        const forward = key.name === "end";
+        const nextCursor = key.ctrl || key.meta || isSuperModifiedKey(key)
+          ? (forward ? value.length : 0)
+          : (forward ? promptLineEnd(value, cursor) : promptLineStart(value, cursor));
+        moveEditorCursor(nextCursor, key.shift === true);
+        verticalCursorColumn = undefined;
+        render();
         return;
       }
       if (isShiftEnterKey(key)) {
@@ -943,6 +1242,17 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
           return;
         }
         finish(resolve, value);
+        return;
+      }
+      const standardDeletionKey = !neovimState && (
+        key.name === "backspace" || key.name === "delete"
+        || (key.ctrl && ["h", "d", "w", "u", "k"].includes(key.name ?? ""))
+        || (key.meta && ["backspace", "delete", "d"].includes(key.name ?? ""))
+      );
+      if (standardDeletionKey && deleteSelection()) {
+        selected = 0;
+        menuDismissed = false;
+        render();
         return;
       }
       const markerDirection = (key.name === "backspace" && !isDeletePromptLineKey(key))
@@ -977,64 +1287,55 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
         render();
         return;
       }
-      if (key.ctrl && key.name === "a") {
-        cursor = 0;
+      if (key.ctrl && key.shift && key.name === "k") {
+        const deleted = deletePromptLine(value, cursor);
+        value = deleted.value;
+        cursor = deleted.cursor;
+        selectionAnchor = undefined;
+        for (const imageIndex of [...deleted.removedImageIndexes].reverse()) images.splice(imageIndex, 1);
       } else if (key.ctrl && key.name === "e") {
-        cursor = value.length;
+        moveEditorCursor(promptLineEnd(value, cursor), key.shift === true);
       } else if (key.ctrl && key.name === "u") {
-        killBuffer = value.slice(0, cursor);
-        value = value.slice(cursor);
-        cursor = 0;
+        const start = promptLineStart(value, cursor);
+        killBuffer = value.slice(start, cursor);
+        deleteEditorRange(start, cursor);
       } else if (key.ctrl && key.name === "k") {
-        killBuffer = value.slice(cursor);
-        value = value.slice(0, cursor);
+        const end = promptLineEnd(value, cursor);
+        killBuffer = value.slice(cursor, end);
+        deleteEditorRange(cursor, end);
       } else if (isDeletePromptLineKey(key)) {
         const deleted = deletePromptLine(value, cursor);
         killBuffer = "";
         value = deleted.value;
         cursor = deleted.cursor;
+        selectionAnchor = undefined;
         for (const imageIndex of [...deleted.removedImageIndexes].reverse()) images.splice(imageIndex, 1);
       } else if ((key.ctrl && key.name === "w") || (key.meta && key.name === "backspace")) {
-        const start = lineWordStart(value, cursor);
+        const start = promptWordStart(value, cursor);
         killBuffer = value.slice(start, cursor);
-        value = value.slice(0, start) + value.slice(cursor);
-        cursor = start;
-      } else if (key.ctrl && key.name === "y") {
-        value = value.slice(0, cursor) + killBuffer + value.slice(cursor);
-        cursor += killBuffer.length;
+        deleteEditorRange(start, cursor);
       } else if (key.ctrl && key.name === "d") {
-        value = value.slice(0, cursor) + value.slice(cursor + 1);
+        deleteEditorRange(cursor, promptNextCharacter(value, cursor));
       } else if (key.ctrl && key.name === "t" && cursor > 0 && cursor < value.length) {
-        const left = value[cursor - 1]!;
-        const right = value[cursor]!;
-        value = value.slice(0, cursor - 1) + right + left + value.slice(cursor + 1);
-        cursor += 1;
+        const leftStart = promptPreviousCharacter(value, cursor);
+        const rightEnd = promptNextCharacter(value, cursor);
+        const left = value.slice(leftStart, cursor);
+        const right = value.slice(cursor, rightEnd);
+        value = value.slice(0, leftStart) + right + left + value.slice(rightEnd);
+        cursor = rightEnd;
       } else if (matchesHotkey(text, key, hotkeys.clearScreen)) {
         output.write("\x1b[2J\x1b[H");
-      } else if ((key.meta && key.name === "b") || (key.ctrl && key.name === "left")) {
-        cursor = lineWordStart(value, cursor);
-      } else if ((key.meta && key.name === "f") || (key.ctrl && key.name === "right")) {
-        cursor = lineWordEnd(value, cursor);
-      } else if (key.meta && key.name === "d") {
-        const end = lineWordEnd(value, cursor);
+      } else if ((key.meta && (key.name === "d" || key.name === "delete"))) {
+        const end = promptWordEnd(value, cursor);
         killBuffer = value.slice(cursor, end);
-        value = value.slice(0, cursor) + value.slice(end);
+        deleteEditorRange(cursor, end);
       } else if (key.name === "backspace" || (key.ctrl && key.name === "h")) {
-        if (cursor > 0) value = value.slice(0, cursor - 1) + value.slice(cursor);
-        cursor = Math.max(cursor - 1, 0);
+        deleteEditorRange(promptPreviousCharacter(value, cursor), cursor);
       } else if (key.name === "delete") {
-        value = value.slice(0, cursor) + value.slice(cursor + 1);
-      } else if (key.name === "home") {
-        cursor = 0;
-      } else if (key.name === "end") {
-        cursor = value.length;
-      } else if (key.name === "left") {
-        cursor = Math.max(cursor - 1, 0);
-      } else if (key.name === "right") {
-        cursor = Math.min(cursor + 1, value.length);
+        deleteEditorRange(cursor, promptNextCharacter(value, cursor));
       } else if (text && !key.ctrl && !key.sequence?.startsWith("\x1b")) {
-        value = value.slice(0, cursor) + text + value.slice(cursor);
-        cursor += text.length;
+        insertPastedText(text);
+        return;
       } else {
         return;
       }
@@ -1046,7 +1347,7 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
     input.on("keypress", onKeypress);
     input.setRawMode(true);
     input.resume();
-    output.write("\x1b[?2004h");
+    output.write("\x1b[>1u\x1b[?2004h");
     activeNotificationHandler = (message) => {
       output.write(`\r${renderedCursorRow > 0 ? `\x1b[${renderedCursorRow}A` : ""}\x1b[J`);
       renderedCursorRow = 0;
@@ -1057,7 +1358,7 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
   });
 
   return result.finally(() => {
-    output.write("\x1b[?2004l");
+    output.write("\x1b[<u\x1b[?2004l");
     visible = 0;
   });
 }
