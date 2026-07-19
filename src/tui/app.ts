@@ -8,7 +8,8 @@ import { color, theme } from "./theme.js";
 import { createNeovimState, ensureNeovimConfig, handleNeovimKey, type NeovimConfig, type NeovimState } from "./neovim.js";
 import { DEFAULT_HOTKEYS, formatHotkey, matchesHotkey, type TuiHotkeys } from "./hotkeys.js";
 import { RAYA_SLASH_COMMANDS } from "../agent/capabilities.js";
-import { insertClipboardImage, insertClipboardText, readClipboard } from "./clipboard.js";
+import { insertClipboardImage, insertClipboardText, readClipboard, removeImageMarker } from "./clipboard.js";
+import { activeWorkspaceMentionStart, attachWorkspaceMention, listWorkspaceMentions, type WorkspaceMention } from "./workspace-mentions.js";
 
 let activeNotificationHandler: ((message: string) => void) | undefined;
 let activeRawInputHandler: ((data: Buffer | string) => void) | undefined;
@@ -106,6 +107,7 @@ type CommandSuggestion = {
   deleteValue?: string;
   needsArgument?: boolean;
   selectable?: boolean;
+  workspaceMention?: WorkspaceMention;
 };
 
 export type TuiCommandSuggestion = CommandSuggestion;
@@ -187,6 +189,8 @@ function protocolLines(hotkeys: TuiHotkeys = DEFAULT_HOTKEYS): string[] { return
   "",
   "CONTROL DECK",
   `${formatHotkey(hotkeys.toggleMode).padEnd(12)} switch Plan ↔ Build`,
+  "@            attach workspace files/folders",
+  "Shift+Enter  new line",
   "Ctrl+V       paste text or an image",
   "/help        commands and shortcuts",
   "/sessions    continue earlier work",
@@ -243,8 +247,25 @@ export function commandSuggestions(
   providerSuggestions: (value: string) => CommandSuggestion[] = () => [],
   modelSuggestions: (query: string) => CommandSuggestion[] = () => [],
   themeSuggestions: () => CommandSuggestion[] = () => [],
-  skillSuggestions: () => TuiSkillSuggestion[] = () => []
+  skillSuggestions: () => TuiSkillSuggestion[] = () => [],
+  workspaceSuggestions: () => WorkspaceMention[] = () => []
 ): CommandSuggestion[] {
+  const workspaceStart = activeWorkspaceMentionStart(value, cursor);
+  if (workspaceStart !== undefined) {
+    const query = value.slice(workspaceStart + 1, cursor).toLowerCase();
+    const matches = workspaceSuggestions().filter((entry) =>
+      !query || entry.path.toLowerCase().includes(query));
+    return [
+      { value: "Workspace · Enter attaches a file or folder:", description: "", selectable: false },
+      ...(matches.length ? matches.map((entry) => ({
+        value: entry.path,
+        label: entry.type === "directory" ? `${entry.path}/` : entry.path,
+        description: entry.type === "directory" ? "Folder" : "File",
+        needsArgument: true,
+        workspaceMention: entry
+      })) : [{ value: "  (none)", description: "", selectable: false }])
+    ];
+  }
   const sessionPrefix = "/sessions ";
   if (value.startsWith(sessionPrefix) && cursor >= sessionPrefix.length) {
     const query = value.slice(sessionPrefix.length, cursor).toLowerCase();
@@ -332,7 +353,7 @@ function wordEnd(value: string, cursor: number): number {
   return index;
 }
 
-/** A one-line editor with a terminal dropdown for slash commands. */
+/** A compact prompt editor with terminal dropdowns for commands and workspace mentions. */
 type InputDraft = { value: string; cursor: number; neovimMode?: NeovimState["mode"]; images?: ImageContent[] };
 type TuiLineResult = { line: string; images: ImageContent[] };
 
@@ -378,6 +399,14 @@ export function promptViewport(value: string, cursor: number, width: number): { 
 
 export function styleImageMarkers(value: string): string {
   return value.replace(/\[Image \d+\]/gu, (marker) => `\x1b[7m${marker}\x1b[27m`);
+}
+
+export function isShiftEnterSequence(raw: string): boolean {
+  return raw === "\n" || raw === "\x1b\r" || raw === "\x1b[13;2u" || raw === "\x1b[27;2;13~";
+}
+
+export function isShiftEnterKey(key: { name?: string; shift?: boolean }): boolean {
+  return (key.name === "return" || key.name === "enter") && key.shift === true;
 }
 export type PromptHistoryState = { index: number; draft: string };
 
@@ -454,6 +483,7 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
   neovimMode?: boolean;
   neovimConfig?: NeovimConfig;
   hotkeys?: TuiHotkeys;
+  workspace?: string;
 }, draft?: InputDraft, history: string[] = []): Promise<TuiLineResult> {
   if (!input.isTTY || !output.isTTY || !input.setRawMode) {
     throw new Error("Raya's interactive TUI requires a TTY terminal.");
@@ -477,15 +507,20 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
   let collectingBracketedPaste = false;
   let suppressKeypressesForDataChunk = false;
   let clipboardPastePending = false;
+  let workspaceMentionCache: WorkspaceMention[] | undefined;
   let onData: (data: Buffer | string) => void;
   const hotkeys = options?.hotkeys ?? info().hotkeys ?? DEFAULT_HOTKEYS;
+  const workspaceSuggestions = (): WorkspaceMention[] => {
+    workspaceMentionCache ??= listWorkspaceMentions(options?.workspace ?? process.cwd());
+    return workspaceMentionCache;
+  };
 
   const render = (): void => {
     const current = info();
     // Leave the last terminal column unused: writing into it can trigger an
     // automatic wrap that readline reports as an extra physical row.
     const terminalWidth = Math.max((output.columns ?? 121) - 1, 32);
-    const suggestions = menuDismissed ? [] : commandSuggestions(value, cursor, options?.sessionSuggestions, options?.thinkingSuggestions, options?.providerSuggestions, options?.modelSuggestions, options?.themeSuggestions, options?.skillSuggestions);
+    const suggestions = menuDismissed ? [] : commandSuggestions(value, cursor, options?.sessionSuggestions, options?.thinkingSuggestions, options?.providerSuggestions, options?.modelSuggestions, options?.themeSuggestions, options?.skillSuggestions, workspaceSuggestions);
     if (selected >= suggestions.length) selected = Math.max(suggestions.length - 1, 0);
     if (suggestions[selected]?.selectable === false) selected = selectableIndex(suggestions, selected - 1, 1);
     // Paint over the previous frame instead of clearing the whole menu first.
@@ -589,6 +624,14 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
   };
 
   const insertCommand = (suggestion: CommandSuggestion, addSpace: boolean): void => {
+    if (suggestion.workspaceMention) {
+      const attached = attachWorkspaceMention(value, cursor, suggestion.workspaceMention.path, suggestion.workspaceMention.type);
+      value = attached.value;
+      cursor = attached.cursor;
+      selected = 0;
+      menuDismissed = false;
+      return;
+    }
     if (suggestion.value.startsWith("@skill:")) {
       const attached = attachSkillToPrompt(value, cursor, suggestion.value.slice("@skill:".length));
       value = attached.value;
@@ -617,13 +660,19 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
     selected = 0;
   };
 
-  let onKeypress: (text: string, key: { name?: string; ctrl?: boolean; meta?: boolean; sequence?: string }) => void;
+  let onKeypress: (text: string, key: { name?: string; ctrl?: boolean; meta?: boolean; shift?: boolean; sequence?: string }) => void;
   const result = new Promise<TuiLineResult>((resolve) => {
     onData = (data) => {
       const bytes = Buffer.isBuffer(data) ? data : Buffer.from(data);
       const raw = bytes.toString("utf8");
       const pasteStart = "\x1b[200~";
       const pasteEnd = "\x1b[201~";
+      if (isShiftEnterSequence(raw)) {
+        suppressKeypressesForDataChunk = true;
+        queueMicrotask(() => { suppressKeypressesForDataChunk = false; });
+        insertPastedText("\n");
+        return;
+      }
       if (collectingBracketedPaste || raw.includes(pasteStart)) {
         suppressKeypressesForDataChunk = true;
         queueMicrotask(() => { suppressKeypressesForDataChunk = false; });
@@ -652,7 +701,7 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
         return;
       }
       if (hotkeys.cancel === "escape" && bytes.length === 1 && bytes[0] === 0x1b) {
-        const suggestions = menuDismissed ? [] : commandSuggestions(value, cursor, options?.sessionSuggestions, options?.thinkingSuggestions, options?.providerSuggestions, options?.modelSuggestions, options?.themeSuggestions, options?.skillSuggestions);
+        const suggestions = menuDismissed ? [] : commandSuggestions(value, cursor, options?.sessionSuggestions, options?.thinkingSuggestions, options?.providerSuggestions, options?.modelSuggestions, options?.themeSuggestions, options?.skillSuggestions, workspaceSuggestions);
         if (suggestions.length) {
           menuDismissed = true;
           selected = 0;
@@ -664,7 +713,7 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
       if (suppressKeypressesForDataChunk || (key.ctrl && key.name === "v")) return;
       if (clipboardPastePending && (key.name === "return" || key.name === "enter")) return;
       const previousValue = value;
-      const suggestions = menuDismissed ? [] : commandSuggestions(value, cursor, options?.sessionSuggestions, options?.thinkingSuggestions, options?.providerSuggestions, options?.modelSuggestions, options?.themeSuggestions, options?.skillSuggestions);
+      const suggestions = menuDismissed ? [] : commandSuggestions(value, cursor, options?.sessionSuggestions, options?.thinkingSuggestions, options?.providerSuggestions, options?.modelSuggestions, options?.themeSuggestions, options?.skillSuggestions, workspaceSuggestions);
       if (matchesHotkey(text, key, hotkeys.exit)) {
         finish(resolve, EXIT_SIGNAL, false);
         return;
@@ -723,6 +772,10 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
         finish(resolve, `${MODE_TOGGLE_PREFIX}${JSON.stringify({ value, cursor, neovimMode: neovimState?.mode })}`, false);
         return;
       }
+      if (isShiftEnterKey(key)) {
+        insertPastedText("\n");
+        return;
+      }
       if (key.name === "return" || key.name === "enter") {
         if (suggestions.length) {
           const suggestion = suggestions[selected]!;
@@ -746,6 +799,26 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
         }
         finish(resolve, value);
         return;
+      }
+      const markerDirection = key.name === "backspace"
+        || (key.ctrl && (key.name === "h" || key.name === "w" || key.name === "backspace"))
+        || (key.meta && key.name === "backspace")
+        || (neovimState?.mode === "NORMAL" && text === "X")
+        ? "backward"
+        : (key.name === "delete" && !key.ctrl)
+          || (key.ctrl && key.name === "d")
+          || (neovimState?.mode === "NORMAL" && text === "x") ? "forward" : undefined;
+      if (markerDirection) {
+        const removed = removeImageMarker(value, cursor, markerDirection);
+        if (removed) {
+          value = removed.value;
+          cursor = removed.cursor;
+          if (removed.imageIndex >= 0 && removed.imageIndex < images.length) images.splice(removed.imageIndex, 1);
+          selected = 0;
+          menuDismissed = false;
+          render();
+          return;
+        }
       }
       if (neovimState && neovimConfig) {
         const edited = handleNeovimKey(value, cursor, text, key, neovimState, neovimConfig);
@@ -906,6 +979,7 @@ export async function runInteractiveTui(inputAgent: Agent, info: TuiSessionInfo,
   neovimMode?: boolean;
   neovimConfig?: NeovimConfig;
   hotkeys?: TuiHotkeys;
+  workspace?: string;
   onToggleMode?: (agent: Agent) => Promise<{ agent?: Agent; mode: "Plan" | "Build" }> | { agent?: Agent; mode: "Plan" | "Build" };
 }): Promise<void> {
   let agent = inputAgent;

@@ -19,6 +19,7 @@ Current workspace: ${workspace}
 ${rayaCapabilityContext()}
 
 Rules:
+- Treat markers like @file:"relative/path" and @folder:"relative/path" in a user message as explicit workspace attachments. Inspect every attached file with read_file and every attached folder with list_files before answering. Multiple markers are allowed and remain scoped to the current workspace.
 - Keep tool use purposeful and explain important actions briefly.
 - Do not claim a command succeeded unless the tool result shows it did.
 - Plan mode is for reading, investigation, and proposing changes.

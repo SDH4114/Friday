@@ -15,6 +15,12 @@ export type ClipboardImageInsertion = {
   marker: string;
 };
 
+export type ImageMarkerRemoval = {
+  value: string;
+  cursor: number;
+  imageIndex: number;
+};
+
 const MACOS_CLIPBOARD_SCRIPT = String.raw`
 ObjC.import("AppKit");
 const pasteboard = $.NSPasteboard.generalPasteboard;
@@ -79,6 +85,39 @@ export function insertClipboardImage(value: string, cursor: number, imageNumber:
     value: `${before}${insertion}${after}`,
     cursor: cursor + insertion.length,
     marker
+  };
+}
+
+export function removeImageMarker(
+  value: string,
+  cursor: number,
+  direction: "backward" | "forward"
+): ImageMarkerRemoval | undefined {
+  const target = direction === "backward" ? cursor - 1 : cursor;
+  if (target < 0 || target >= value.length) return undefined;
+  const markers = [...value.matchAll(/\[Image (\d+)\]/gu)];
+  const marker = markers.find((match) => {
+    const start = match.index;
+    return target >= start && target < start + match[0].length;
+  });
+  if (!marker) return undefined;
+
+  let start = marker.index;
+  let end = start + marker[0].length;
+  if (/\s/u.test(value[start - 1] ?? "") && /\s/u.test(value[end] ?? "")) end += 1;
+  else if (end === value.length && /\s/u.test(value[start - 1] ?? "")) start -= 1;
+  else if (start === 0 && /\s/u.test(value[end] ?? "")) end += 1;
+
+  const imageNumber = Number(marker[1]);
+  const withoutMarker = `${value.slice(0, start)}${value.slice(end)}`;
+  const renumbered = withoutMarker.replace(/\[Image (\d+)\]/gu, (block, rawNumber: string) => {
+    const number = Number(rawNumber);
+    return number > imageNumber ? `[Image ${number - 1}]` : block;
+  });
+  return {
+    value: renumbered,
+    cursor: Math.min(start, renumbered.length),
+    imageIndex: imageNumber - 1
   };
 }
 

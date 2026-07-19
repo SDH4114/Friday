@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { displayPromptValue, promptViewport, styleImageMarkers } from "../src/tui/app.js";
-import { insertClipboardImage, insertClipboardText, normalizePastedText, parseMacClipboardOutput } from "../src/tui/clipboard.js";
+import { displayPromptValue, isShiftEnterKey, isShiftEnterSequence, promptViewport, styleImageMarkers } from "../src/tui/app.js";
+import { insertClipboardImage, insertClipboardText, normalizePastedText, parseMacClipboardOutput, removeImageMarker } from "../src/tui/clipboard.js";
 
 test("pasted text is normalized and inserted as one operation", () => {
   assert.equal(normalizePastedText("first\r\nsecond\0"), "first\nsecond");
@@ -26,6 +26,26 @@ test("clipboard images get increasing, readable markers", () => {
   assert.equal(second.value, "describe [Image 1] [Image 2]");
   assert.equal(second.marker, "[Image 2]");
   assert.match(styleImageMarkers(second.value), /\x1b\[7m\[Image 1\]\x1b\[27m/);
+
+  assert.deepEqual(removeImageMarker(second.value, "describe [Image 1]".length, "backward"), {
+    value: "describe [Image 1]",
+    cursor: "describe ".length,
+    imageIndex: 0
+  });
+  assert.deepEqual(removeImageMarker(second.value, second.value.indexOf("[Image 2]"), "forward"), {
+    value: "describe [Image 1]",
+    cursor: "describe [Image 1]".length,
+    imageIndex: 1
+  });
+});
+
+test("Shift+Enter is recognized as a newline instead of submit", () => {
+  assert.equal(isShiftEnterKey({ name: "enter", shift: true }), true);
+  assert.equal(isShiftEnterKey({ name: "enter", shift: false }), false);
+  assert.equal(isShiftEnterSequence("\n"), true);
+  assert.equal(isShiftEnterSequence("\x1b\r"), true);
+  assert.equal(isShiftEnterSequence("\x1b[13;2u"), true);
+  assert.equal(isShiftEnterSequence("\x1b[27;2;13~"), true);
 });
 
 test("macOS clipboard output becomes real multimodal image content", () => {

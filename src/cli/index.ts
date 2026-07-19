@@ -1091,6 +1091,7 @@ program
         thinkingLevel: config.thinkingLevel,
         hotkeys: config.hotkeys
       }, {
+        workspace: process.cwd(),
         onCommand: ({ agent: activeAgent, command }) => sessionLock.run(() => handleCommand(activeAgent, command)),
         onBeforePrompt: () => sessionLock.acquire(),
         onAfterPrompt: (activeAgent) => persist(activeAgent),
