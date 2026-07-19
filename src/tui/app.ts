@@ -339,17 +339,20 @@ export function attachSkillToPrompt(value: string, cursor: number, skillName: st
   return { value: next, cursor: start + insertion.length };
 }
 
-function wordStart(value: string, cursor: number): number {
+export function lineWordStart(value: string, cursor: number): number {
+  const lineStart = value.lastIndexOf("\n", Math.max(cursor - 1, 0)) + 1;
   let index = cursor;
-  while (index > 0 && /\s/.test(value[index - 1]!)) index -= 1;
-  while (index > 0 && !/\s/.test(value[index - 1]!)) index -= 1;
+  while (index > lineStart && /[^\S\n]/u.test(value[index - 1]!)) index -= 1;
+  while (index > lineStart && !/\s/u.test(value[index - 1]!)) index -= 1;
   return index;
 }
 
-function wordEnd(value: string, cursor: number): number {
+export function lineWordEnd(value: string, cursor: number): number {
+  const newline = value.indexOf("\n", cursor);
+  const lineEnd = newline === -1 ? value.length : newline;
   let index = cursor;
-  while (index < value.length && /\s/.test(value[index]!)) index += 1;
-  while (index < value.length && !/\s/.test(value[index]!)) index += 1;
+  while (index < lineEnd && /[^\S\n]/u.test(value[index]!)) index += 1;
+  while (index < lineEnd && !/\s/u.test(value[index]!)) index += 1;
   return index;
 }
 
@@ -880,7 +883,7 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
         killBuffer = value.slice(cursor);
         value = value.slice(0, cursor);
       } else if ((key.ctrl && (key.name === "w" || key.name === "backspace")) || (key.meta && key.name === "backspace")) {
-        const start = wordStart(value, cursor);
+        const start = lineWordStart(value, cursor);
         killBuffer = value.slice(start, cursor);
         value = value.slice(0, start) + value.slice(cursor);
         cursor = start;
@@ -897,11 +900,11 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
       } else if (matchesHotkey(text, key, hotkeys.clearScreen)) {
         output.write("\x1b[2J\x1b[H");
       } else if ((key.meta && key.name === "b") || (key.ctrl && key.name === "left")) {
-        cursor = wordStart(value, cursor);
+        cursor = lineWordStart(value, cursor);
       } else if ((key.meta && key.name === "f") || (key.ctrl && key.name === "right")) {
-        cursor = wordEnd(value, cursor);
+        cursor = lineWordEnd(value, cursor);
       } else if ((key.meta && key.name === "d") || (key.ctrl && key.name === "delete")) {
-        const end = wordEnd(value, cursor);
+        const end = lineWordEnd(value, cursor);
         killBuffer = value.slice(cursor, end);
         value = value.slice(0, cursor) + value.slice(end);
       } else if (key.name === "backspace" || (key.ctrl && key.name === "h")) {

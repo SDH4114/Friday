@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { displayPromptValue, isShiftEnterKey, isShiftEnterSequence, multilinePromptViewport, promptViewport, styleImageMarkers } from "../src/tui/app.js";
+import { displayPromptValue, isShiftEnterKey, isShiftEnterSequence, lineWordEnd, lineWordStart, multilinePromptViewport, promptViewport, styleImageMarkers } from "../src/tui/app.js";
 import { insertClipboardImage, insertClipboardText, normalizePastedText, parseMacClipboardOutput, removeImageMarker } from "../src/tui/clipboard.js";
 
 test("pasted text is normalized and inserted as one operation", () => {
@@ -52,6 +52,18 @@ test("Shift+Enter is recognized as a newline instead of submit", () => {
     cursorRow: 1,
     cursorColumn: 6
   });
+});
+
+test("Ctrl+Backspace and Ctrl+Delete stay inside the cursor line", () => {
+  const value = "first line\n  second word\nthird line";
+  const secondLineStart = value.indexOf("\n") + 1;
+  const secondLineEnd = value.indexOf("\n", secondLineStart);
+
+  assert.equal(lineWordStart(value, secondLineStart), secondLineStart);
+  assert.equal(lineWordStart(value, secondLineStart + 2), secondLineStart);
+  assert.equal(lineWordStart(value, secondLineEnd), value.indexOf("word"));
+  assert.equal(lineWordEnd(value, secondLineEnd), secondLineEnd);
+  assert.equal(lineWordEnd(value, secondLineStart), value.indexOf("second") + "second".length);
 });
 
 test("macOS clipboard output becomes real multimodal image content", () => {
