@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { displayPromptValue, isShiftEnterKey, isShiftEnterSequence, lineWordEnd, lineWordStart, multilinePromptViewport, promptViewport, styleImageMarkers } from "../src/tui/app.js";
+import { advanceLegacyShiftEnterKeypress, deletePromptLine, displayPromptValue, isDeletePromptLineKey, isShiftEnterKey, isShiftEnterSequence, lineWordEnd, lineWordStart, movePromptCursorVertically, multilinePromptViewport, promptViewport, styleImageMarkers } from "../src/tui/app.js";
 import { insertClipboardImage, insertClipboardText, normalizePastedText, parseMacClipboardOutput, removeImageMarker } from "../src/tui/clipboard.js";
 
 test("pasted text is normalized and inserted as one operation", () => {
@@ -46,7 +46,13 @@ test("Shift+Enter is recognized as a newline instead of submit", () => {
   assert.equal(isShiftEnterSequence("\n"), true);
   assert.equal(isShiftEnterSequence("\x1b\r"), true);
   assert.equal(isShiftEnterSequence("\x1b[13;2u"), true);
+  assert.equal(isShiftEnterSequence("\x1b[13;2~"), true);
   assert.equal(isShiftEnterSequence("\x1b[27;2;13~"), true);
+  assert.deepEqual(advanceLegacyShiftEnterKeypress(undefined, "\x1b[27;2;"), { kind: "pending", suffix: "" });
+  assert.deepEqual(advanceLegacyShiftEnterKeypress("", "1"), { kind: "pending", suffix: "1" });
+  assert.deepEqual(advanceLegacyShiftEnterKeypress("1", "3"), { kind: "pending", suffix: "13" });
+  assert.deepEqual(advanceLegacyShiftEnterKeypress("13", "~"), { kind: "newline" });
+  assert.deepEqual(advanceLegacyShiftEnterKeypress("1", "x"), { kind: "replay", text: "1" });
   assert.deepEqual(multilinePromptViewport("first\nsecond", 12, 20), {
     rows: ["first", "second"],
     cursorRow: 1,
@@ -54,7 +60,19 @@ test("Shift+Enter is recognized as a newline instead of submit", () => {
   });
 });
 
-test("Ctrl+Backspace and Ctrl+Delete stay inside the cursor line", () => {
+test("vertical arrows move through prompt lines and preserve the intended column", () => {
+  const value = "12345\nx\nabcde";
+  const up = movePromptCursorVertically(value, value.length, -1);
+  assert.deepEqual(up, { cursor: 7, preferredColumn: 5 });
+  assert.deepEqual(movePromptCursorVertically(value, up.cursor, -1, up.preferredColumn), {
+    cursor: 5,
+    preferredColumn: 5
+  });
+  assert.deepEqual(movePromptCursorVertically(value, 0, -1), { cursor: 0, preferredColumn: 0 });
+  assert.deepEqual(movePromptCursorVertically(value, value.length, 1), { cursor: value.length, preferredColumn: 5 });
+});
+
+test("Ctrl+Backspace and Ctrl+Delete remove the entire cursor line", () => {
   const value = "first line\n  second word\nthird line";
   const secondLineStart = value.indexOf("\n") + 1;
   const secondLineEnd = value.indexOf("\n", secondLineStart);
@@ -64,6 +82,46 @@ test("Ctrl+Backspace and Ctrl+Delete stay inside the cursor line", () => {
   assert.equal(lineWordStart(value, secondLineEnd), value.indexOf("word"));
   assert.equal(lineWordEnd(value, secondLineEnd), secondLineEnd);
   assert.equal(lineWordEnd(value, secondLineStart), value.indexOf("second") + "second".length);
+  assert.deepEqual(deletePromptLine(value, secondLineStart + 4), {
+    value: "first line\nthird line",
+    cursor: secondLineStart,
+    removedImageIndexes: []
+  });
+  assert.deepEqual(deletePromptLine("first\nlast", 10), {
+    value: "first",
+    cursor: 5,
+    removedImageIndexes: []
+  });
+  assert.deepEqual(deletePromptLine("only line", 4), {
+    value: "",
+    cursor: 0,
+    removedImageIndexes: []
+  });
+  assert.deepEqual(deletePromptLine("first\n\nthird", 6), {
+    value: "first\nthird",
+    cursor: 6,
+    removedImageIndexes: []
+  });
+  assert.deepEqual(deletePromptLine("\nsecond", 0), {
+    value: "second",
+    cursor: 0,
+    removedImageIndexes: []
+  });
+  assert.equal(isDeletePromptLineKey({ name: "backspace", ctrl: true }), true);
+  assert.equal(isDeletePromptLineKey({ name: "backspace", ctrl: false, sequence: "\x08" }), true);
+  assert.equal(isDeletePromptLineKey({ name: "h", ctrl: true }), true);
+  assert.equal(isDeletePromptLineKey({ name: "delete", ctrl: true }), true);
+  assert.equal(isDeletePromptLineKey({ name: "delete", ctrl: false }), false);
+  assert.equal(isDeletePromptLineKey({ name: "backspace", ctrl: false, sequence: "\x7f" }), false);
+  assert.equal(isDeletePromptLineKey({ name: "w", ctrl: true }), false);
+});
+
+test("deleting a prompt line removes its image attachments and renumbers later markers", () => {
+  assert.deepEqual(deletePromptLine("one [Image 1]\ntwo [Image 2]\nthree [Image 3]", 20), {
+    value: "one [Image 1]\nthree [Image 2]",
+    cursor: 14,
+    removedImageIndexes: [1]
+  });
 });
 
 test("macOS clipboard output becomes real multimodal image content", () => {
