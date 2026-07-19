@@ -1,4 +1,5 @@
 import type { Agent } from "@earendil-works/pi-agent-core";
+import type { ImageContent } from "@earendil-works/pi-ai/compat";
 import { emitKeypressEvents } from "node:readline";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { spawn } from "node:child_process";
@@ -7,6 +8,7 @@ import { color, theme } from "./theme.js";
 import { createNeovimState, ensureNeovimConfig, handleNeovimKey, type NeovimConfig, type NeovimState } from "./neovim.js";
 import { DEFAULT_HOTKEYS, formatHotkey, matchesHotkey, type TuiHotkeys } from "./hotkeys.js";
 import { RAYA_SLASH_COMMANDS } from "../agent/capabilities.js";
+import { insertClipboardImage, insertClipboardText, readClipboard } from "./clipboard.js";
 
 let activeNotificationHandler: ((message: string) => void) | undefined;
 let activeRawInputHandler: ((data: Buffer | string) => void) | undefined;
@@ -185,6 +187,7 @@ function protocolLines(hotkeys: TuiHotkeys = DEFAULT_HOTKEYS): string[] { return
   "",
   "CONTROL DECK",
   `${formatHotkey(hotkeys.toggleMode).padEnd(12)} switch Plan ↔ Build`,
+  "Ctrl+V       paste text or an image",
   "/help        commands and shortcuts",
   "/sessions    continue earlier work",
   `/exit and ${formatHotkey(hotkeys.exit).padEnd(12)} quit`,
@@ -330,7 +333,52 @@ function wordEnd(value: string, cursor: number): number {
 }
 
 /** A one-line editor with a terminal dropdown for slash commands. */
-type InputDraft = { value: string; cursor: number; neovimMode?: NeovimState["mode"] };
+type InputDraft = { value: string; cursor: number; neovimMode?: NeovimState["mode"]; images?: ImageContent[] };
+type TuiLineResult = { line: string; images: ImageContent[] };
+
+/** Keep pasted line breaks visible without letting them corrupt the terminal frame. */
+export function displayPromptValue(value: string): string {
+  return value
+    .replace(/\n/gu, "↵ ")
+    .replace(/\t/gu, "  ")
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/gu, "�");
+}
+
+function takeDisplayStart(value: string, width: number): string {
+  if (visibleWidth(value) <= width) return value;
+  if (width <= 1) return "…".slice(0, Math.max(width, 0));
+  let result = "";
+  for (const character of Array.from(value)) {
+    if (visibleWidth(`${result}${character}…`) > width) break;
+    result += character;
+  }
+  return `${result}…`;
+}
+
+function takeDisplayEnd(value: string, width: number): string {
+  if (visibleWidth(value) <= width) return value;
+  if (width <= 1) return "…".slice(0, Math.max(width, 0));
+  let result = "";
+  for (const character of Array.from(value).reverse()) {
+    if (visibleWidth(`…${character}${result}`) > width) break;
+    result = `${character}${result}`;
+  }
+  return `…${result}`;
+}
+
+export function promptViewport(value: string, cursor: number, width: number): { text: string; cursorColumn: number } {
+  const safeWidth = Math.max(Math.floor(width), 1);
+  const before = displayPromptValue(value.slice(0, cursor));
+  const after = displayPromptValue(value.slice(cursor));
+  const afterReservation = Math.min(visibleWidth(after), Math.floor(safeWidth / 3));
+  const visibleBefore = takeDisplayEnd(before, safeWidth - afterReservation);
+  const visibleAfter = takeDisplayStart(after, safeWidth - visibleWidth(visibleBefore));
+  return { text: `${visibleBefore}${visibleAfter}`, cursorColumn: visibleWidth(visibleBefore) };
+}
+
+export function styleImageMarkers(value: string): string {
+  return value.replace(/\[Image \d+\]/gu, (marker) => `\x1b[7m${marker}\x1b[27m`);
+}
 export type PromptHistoryState = { index: number; draft: string };
 
 export function movePromptHistory(
@@ -406,12 +454,13 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
   neovimMode?: boolean;
   neovimConfig?: NeovimConfig;
   hotkeys?: TuiHotkeys;
-}, draft?: InputDraft, history: string[] = []): Promise<string> {
+}, draft?: InputDraft, history: string[] = []): Promise<TuiLineResult> {
   if (!input.isTTY || !output.isTTY || !input.setRawMode) {
     throw new Error("Raya's interactive TUI requires a TTY terminal.");
   }
 
   let value = draft?.value ?? "";
+  const images = [...(draft?.images ?? [])];
   const neovimConfig = options?.neovimMode ? (options.neovimConfig ?? ensureNeovimConfig()) : undefined;
   const neovimState: NeovimState | undefined = neovimConfig ? createNeovimState(neovimConfig) : undefined;
   if (neovimState && draft?.neovimMode) neovimState.mode = draft.neovimMode;
@@ -424,6 +473,10 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
   let deleteArmedValue: string | undefined;
   let menuDismissed = false;
   let settled = false;
+  let bracketedPaste = "";
+  let collectingBracketedPaste = false;
+  let suppressKeypressesForDataChunk = false;
+  let clipboardPastePending = false;
   let onData: (data: Buffer | string) => void;
   const hotkeys = options?.hotkeys ?? info().hotkeys ?? DEFAULT_HOTKEYS;
 
@@ -438,13 +491,16 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
     // Paint over the previous frame instead of clearing the whole menu first.
     // Clearing first creates a visible blank frame on every arrow-key press.
     output.write("\r");
-    let displayValue = value;
-    if (neovimState?.mode === "VISUAL" && neovimState.selectionStart !== undefined && value.length) {
+    const inputWidth = Math.max(terminalWidth - visibleWidth(label()), 1);
+    const viewport = promptViewport(value, cursor, inputWidth);
+    let displayValue = viewport.text;
+    const entireValueFits = visibleWidth(displayPromptValue(value)) <= inputWidth;
+    if (entireValueFits && neovimState?.mode === "VISUAL" && neovimState.selectionStart !== undefined && value.length) {
       const start = Math.min(neovimState.selectionStart, cursor);
       const end = Math.max(neovimState.selectionStart, cursor) + 1;
-      displayValue = `${value.slice(0, start)}\x1b[7m${value.slice(start, end)}${theme.reset}${value.slice(end)}`;
+      displayValue = `${displayPromptValue(value.slice(0, start))}\x1b[7m${displayPromptValue(value.slice(start, end))}${theme.reset}${displayPromptValue(value.slice(end))}`;
     }
-    output.write(color(label(), theme.blue) + color(displayValue, theme.white) + "\x1b[K\n");
+    output.write(color(label(), theme.blue) + color(styleImageMarkers(displayValue), theme.white) + "\x1b[K\n");
     const windowStart = Math.max(0, Math.min(selected - Math.floor(MAX_VISIBLE_SUGGESTIONS / 2), suggestions.length - MAX_VISIBLE_SUGGESTIONS));
     const visibleSuggestions = suggestions.slice(windowStart, windowStart + MAX_VISIBLE_SUGGESTIONS);
     let suggestionLines = 0;
@@ -476,11 +532,11 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
     const footer = `Context ${used}/${limit} · ${modelStatusLabel(current)} · ${current.directory} · Raya v${current.version}`;
     output.write(color(fitCell(footer, terminalWidth).trimEnd(), theme.gray) + "\x1b[K\n\x1b[J");
     visible = suggestionLines;
-    const cursorColumn = visibleWidth(label()) + visibleWidth(value.slice(0, cursor));
+    const cursorColumn = visibleWidth(label()) + viewport.cursorColumn;
     output.write(`\x1b[${visible + 2}A\r\x1b[${cursorColumn}C`);
   };
 
-  const finish = (resolve: (line: string) => void, line: string, echo = true): void => {
+  const finish = (resolve: (result: TuiLineResult) => void, line: string, echo = true): void => {
     if (settled) return;
     settled = true;
     input.setRawMode(false);
@@ -488,9 +544,48 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
     if (activeRawInputHandler === onData) activeRawInputHandler = undefined;
     input.pause();
     activeNotificationHandler = undefined;
+    output.write("\x1b[?2004l");
     output.write("\r\x1b[J");
-    if (echo) output.write(color(label(), theme.blue) + color(line, theme.white) + "\n");
-    resolve(line);
+    if (echo) {
+      const viewport = promptViewport(line, line.length, Math.max((output.columns ?? 121) - 1 - visibleWidth(label()), 1));
+      output.write(color(label(), theme.blue) + color(styleImageMarkers(viewport.text), theme.white) + "\n");
+    }
+    resolve({ line, images: [...images] });
+  };
+
+  const insertPastedText = (text: string): void => {
+    const next = insertClipboardText(value, cursor, text);
+    value = next.value;
+    cursor = next.cursor;
+    selected = 0;
+    menuDismissed = false;
+    render();
+  };
+
+  const pasteFromClipboard = async (): Promise<void> => {
+    if (clipboardPastePending) return;
+    clipboardPastePending = true;
+    try {
+      const payload = await readClipboard();
+      if (settled) return;
+      if (!payload) {
+        notifyTui("Clipboard is empty or this clipboard format is not supported.");
+      } else if (payload.kind === "text") {
+        insertPastedText(payload.text);
+      } else {
+        images.push(payload.image);
+        const next = insertClipboardImage(value, cursor, images.length);
+        value = next.value;
+        cursor = next.cursor;
+        selected = 0;
+        menuDismissed = false;
+        render();
+      }
+    } catch (error) {
+      notifyTui(`Could not paste clipboard: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      clipboardPastePending = false;
+    }
   };
 
   const insertCommand = (suggestion: CommandSuggestion, addSpace: boolean): void => {
@@ -523,9 +618,35 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
   };
 
   let onKeypress: (text: string, key: { name?: string; ctrl?: boolean; meta?: boolean; sequence?: string }) => void;
-  const result = new Promise<string>((resolve) => {
+  const result = new Promise<TuiLineResult>((resolve) => {
     onData = (data) => {
       const bytes = Buffer.isBuffer(data) ? data : Buffer.from(data);
+      const raw = bytes.toString("utf8");
+      const pasteStart = "\x1b[200~";
+      const pasteEnd = "\x1b[201~";
+      if (collectingBracketedPaste || raw.includes(pasteStart)) {
+        suppressKeypressesForDataChunk = true;
+        queueMicrotask(() => { suppressKeypressesForDataChunk = false; });
+        const chunk = collectingBracketedPaste ? raw : raw.slice(raw.indexOf(pasteStart) + pasteStart.length);
+        collectingBracketedPaste = true;
+        const end = chunk.indexOf(pasteEnd);
+        if (end === -1) {
+          bracketedPaste += chunk;
+        } else {
+          bracketedPaste += chunk.slice(0, end);
+          const pasted = bracketedPaste;
+          bracketedPaste = "";
+          collectingBracketedPaste = false;
+          insertPastedText(pasted);
+        }
+        return;
+      }
+      if (bytes.length === 1 && bytes[0] === 0x16) {
+        suppressKeypressesForDataChunk = true;
+        queueMicrotask(() => { suppressKeypressesForDataChunk = false; });
+        void pasteFromClipboard();
+        return;
+      }
       if (hotkeys.exit === "ctrl+c" && bytes.length === 1 && bytes[0] === 0x03) {
         finish(resolve, EXIT_SIGNAL, false);
         return;
@@ -540,6 +661,8 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
       }
     };
     onKeypress = (text, key) => {
+      if (suppressKeypressesForDataChunk || (key.ctrl && key.name === "v")) return;
+      if (clipboardPastePending && (key.name === "return" || key.name === "enter")) return;
       const previousValue = value;
       const suggestions = menuDismissed ? [] : commandSuggestions(value, cursor, options?.sessionSuggestions, options?.thinkingSuggestions, options?.providerSuggestions, options?.modelSuggestions, options?.themeSuggestions, options?.skillSuggestions);
       if (matchesHotkey(text, key, hotkeys.exit)) {
@@ -700,6 +823,7 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
     input.on("keypress", onKeypress);
     input.setRawMode(true);
     input.resume();
+    output.write("\x1b[?2004h");
     activeNotificationHandler = (message) => {
       output.write("\r\x1b[J");
       output.write(`${color(message, theme.yellow)}\n`);
@@ -709,6 +833,7 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
   });
 
   return result.finally(() => {
+    output.write("\x1b[?2004l");
     visible = 0;
   });
 }
@@ -724,7 +849,7 @@ async function runTerminalCommand(command: string): Promise<void> {
   });
 }
 
-async function runAgentPromptWithHotkeys(agent: Agent, message: string, hotkeys: TuiHotkeys): Promise<boolean> {
+async function runAgentPromptWithHotkeys(agent: Agent, message: string, images: ImageContent[], hotkeys: TuiHotkeys): Promise<boolean> {
   let cancelled = false;
   const cancel = (): void => {
     if (cancelled) return;
@@ -754,7 +879,7 @@ async function runAgentPromptWithHotkeys(agent: Agent, message: string, hotkeys:
   input.setRawMode?.(true);
   input.resume();
   try {
-    await agent.prompt(message);
+    await agent.prompt(message, images);
     await agent.waitForIdle();
   } catch (error) {
     if (!cancelled) throw error;
@@ -808,7 +933,8 @@ export async function runInteractiveTui(inputAgent: Agent, info: TuiSessionInfo,
 
   try {
     while (true) {
-      const prompt = await readTuiLine(mode, options?.statusInfo ?? (() => ({ ...info, mode })), options, draft, promptHistory);
+      const promptResult = await readTuiLine(mode, options?.statusInfo ?? (() => ({ ...info, mode })), options, draft, promptHistory);
+      const prompt = promptResult.line;
       draft = undefined;
       const message = prompt.trim();
 
@@ -818,7 +944,7 @@ export async function runInteractiveTui(inputAgent: Agent, info: TuiSessionInfo,
       }
 
       if (prompt.startsWith(MODE_TOGGLE_PREFIX)) {
-        draft = JSON.parse(prompt.slice(MODE_TOGGLE_PREFIX.length)) as InputDraft;
+        draft = { ...JSON.parse(prompt.slice(MODE_TOGGLE_PREFIX.length)) as InputDraft, images: promptResult.images };
         const result = await options?.onToggleMode?.(agent);
         if (result) {
           agent = result.agent ?? agent;
@@ -829,7 +955,7 @@ export async function runInteractiveTui(inputAgent: Agent, info: TuiSessionInfo,
 
       if (prompt.startsWith(MENU_OPEN_PREFIX)) {
         const command = prompt.slice(MENU_OPEN_PREFIX.length);
-        draft = { value: `${command} `, cursor: command.length + 1 };
+        draft = { value: `${command} `, cursor: command.length + 1, images: promptResult.images };
         continue;
       }
 
@@ -871,7 +997,7 @@ export async function runInteractiveTui(inputAgent: Agent, info: TuiSessionInfo,
       try {
         const messagesBeforePrompt = [...agent.state.messages];
         if (promptHistory.at(-1) !== message) promptHistory.push(message);
-        const cancelled = await runAgentPromptWithHotkeys(agent, message, hotkeys);
+        const cancelled = await runAgentPromptWithHotkeys(agent, message, promptResult.images, hotkeys);
         if (cancelled) {
           agent.state.messages = messagesBeforePrompt;
           continue;
