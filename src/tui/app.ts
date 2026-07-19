@@ -148,11 +148,9 @@ function centerCell(value: string, width: number): string {
 
 function dashboardTitle(width: number, title: string): string {
   const innerWidth = Math.max(width - 2, 0);
-  const rawLabel = ` ${title} `;
+  const rawLabel = `─ ${title} `;
   const label = visibleWidth(rawLabel) <= innerWidth ? rawLabel : fitCell(rawLabel, innerWidth).trimEnd();
-  const remaining = Math.max(innerWidth - visibleWidth(label), 0);
-  const left = Math.floor(remaining / 2);
-  return `╭${"─".repeat(left)}${label}${"─".repeat(remaining - left)}╮`;
+  return `╭${label}${"─".repeat(Math.max(innerWidth - visibleWidth(label), 0))}╮`;
 }
 
 function statusLines(info: TuiSessionInfo): string[] {
@@ -186,16 +184,17 @@ const protocolLines = [
 ];
 
 export function renderStartupDashboard(info: TuiSessionInfo, requestedWidth = 120): string[] {
-  const width = Math.max(4, Math.min(Math.floor(requestedWidth), 120));
+  const width = Math.max(32, Math.floor(requestedWidth));
   const title = `Raya A.P.P.L.E.  v${info.version}`;
   const left = statusLines(info);
 
   if (width < 88) {
     const contentWidth = width - 4;
     const lines = [...left, "", ...protocolLines];
+    const brandHeight = info.headerStyle === "large" ? largeRayaLogo.length + 1 : 2;
     return [
       dashboardTitle(width, title),
-      ...lines.map((line) => `│ ${centerCell(line, contentWidth)} │`),
+      ...lines.map((line, index) => `│ ${index < brandHeight ? centerCell(line, contentWidth) : fitCell(line, contentWidth)} │`),
       `╰${"─".repeat(width - 2)}╯`
     ];
   }
@@ -204,8 +203,9 @@ export function renderStartupDashboard(info: TuiSessionInfo, requestedWidth = 12
   const leftWidth = Math.max(34, Math.floor(available * 0.38));
   const rightWidth = available - leftWidth;
   const height = Math.max(left.length, protocolLines.length);
+  const brandHeight = info.headerStyle === "large" ? largeRayaLogo.length + 1 : 2;
   const rows = Array.from({ length: height }, (_, index) =>
-    `│ ${centerCell(left[index] ?? "", leftWidth)} │ ${centerCell(protocolLines[index] ?? "", rightWidth)} │`);
+    `│ ${index < brandHeight ? centerCell(left[index] ?? "", leftWidth) : fitCell(left[index] ?? "", leftWidth)} │ ${fitCell(protocolLines[index] ?? "", rightWidth)} │`);
   return [
     dashboardTitle(width, title),
     ...rows,
@@ -213,15 +213,9 @@ export function renderStartupDashboard(info: TuiSessionInfo, requestedWidth = 12
   ];
 }
 
-export function renderCenteredStartupDashboard(info: TuiSessionInfo, terminalWidth = 120): string[] {
-  const columns = Math.max(Math.floor(terminalWidth), 4);
-  const panelWidth = Math.max(4, Math.min(columns - 2, 120));
-  const indent = " ".repeat(Math.max(Math.floor((columns - panelWidth) / 2), 0));
-  return renderStartupDashboard(info, panelWidth).map((line) => `${indent}${line}`);
-}
-
 function renderHeader(info: TuiSessionInfo): void {
-  console.log(color(renderCenteredStartupDashboard(info, output.columns ?? 120).join("\n"), theme.cyan));
+  const width = output.columns ? Math.max(output.columns - 2, 32) : 120;
+  console.log(color(renderStartupDashboard(info, width).join("\n"), theme.cyan));
   console.log();
 }
 

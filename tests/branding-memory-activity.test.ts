@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { advanceSessionDeleteKey, renderCenteredStartupDashboard, renderLargeAppleWord, renderStartupDashboard, sessionDeleteDescription } from "../src/tui/app.js";
+import { advanceSessionDeleteKey, renderLargeAppleWord, renderStartupDashboard, sessionDeleteDescription } from "../src/tui/app.js";
 import { formatToolActivity } from "../src/tui/render-events.js";
 import { theme } from "../src/tui/theme.js";
 import { renderMarkdown } from "../src/tui/markdown.js";
@@ -37,16 +37,25 @@ test("startup dashboard is Raya-specific, responsive, and geometrically aligned"
   assert.match(wide.join("\n"), /\/exit and Ctrl\+C\s+quit/);
   assert.doesNotMatch(wide.join("\n"), /Esc\s+stop the current run/);
   assert.doesNotMatch(wide.join("\n"), /Welcome back|Tips for getting started|What's new/);
+  const rayaRow = wide.find((line) => line.includes("RAYA"));
+  const appleRow = wide.find((line) => line.includes("A.P.P.L.E.") && !line.includes("Raya A.P.P.L.E."));
+  assert.ok(rayaRow && appleRow);
+  const leftColumnWidth = wide[1]!.indexOf("│", 1) - 1;
+  const leftCell = (line: string): string => line.slice(2, 2 + leftColumnWidth);
+  const visualCenter = (line: string, text: string): number => leftCell(line).indexOf(text) + visibleWidth(text) / 2;
+  assert.equal(visualCenter(rayaRow, "◢◤  RAYA  ◥◣"), visualCenter(appleRow, "A.P.P.L.E."));
+
+  const fullTerminal = renderStartupDashboard(info, 160);
+  assert.ok(fullTerminal.every((line) => visibleWidth(line) === 160));
+  assert.ok(fullTerminal[0]!.startsWith("╭─ Raya A.P.P.L.E."));
+
+  const extraWideTerminal = renderStartupDashboard(info, 220);
+  assert.ok(extraWideTerminal.every((line) => visibleWidth(line) === 220));
 
   const narrow = renderStartupDashboard(info, 72);
   assert.ok(narrow.every((line) => visibleWidth(line) === 72));
   assert.doesNotMatch(narrow.join("\n"), /┴/);
 
-  const centered = renderCenteredStartupDashboard(info, 160);
-  assert.ok(centered.every((line) => line.startsWith(" ".repeat(20))));
-  const tiny = renderCenteredStartupDashboard(info, 30);
-  assert.ok(tiny.every((line) => visibleWidth(line) <= 30));
-  assert.match(tiny.join("\n"), /RAYA/);
 });
 
 test("all semantic interface colors resolve to the blue palette", () => {
