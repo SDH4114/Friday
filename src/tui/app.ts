@@ -289,6 +289,23 @@ function wordEnd(value: string, cursor: number): number {
 
 /** A one-line editor with a terminal dropdown for slash commands. */
 type InputDraft = { value: string; cursor: number; neovimMode?: NeovimState["mode"] };
+export type PromptHistoryState = { index: number; draft: string };
+
+export function movePromptHistory(
+  history: readonly string[],
+  state: PromptHistoryState,
+  currentValue: string,
+  direction: -1 | 1
+): { value: string; state: PromptHistoryState } {
+  if (!history.length) return { value: currentValue, state };
+  const draft = state.index === history.length ? currentValue : state.draft;
+  const index = Math.max(0, Math.min(history.length, state.index + direction));
+  return {
+    value: index === history.length ? draft : history[index]!,
+    state: { index, draft }
+  };
+}
+
 const MODE_TOGGLE_PREFIX = "__RAYA_TOGGLE_MODE__";
 const EXIT_SIGNAL = "__RAYA_EXIT__";
 const MENU_OPEN_PREFIX = "__RAYA_OPEN_MENU__";
@@ -350,8 +367,7 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
   let visible = 0;
   let renderedLines = 0;
   let killBuffer = "";
-  let historyIndex = history.length;
-  let historyDraft = value;
+  let historyState: PromptHistoryState = { index: history.length, draft: value };
   let deleteArmedValue: string | undefined;
   let menuDismissed = false;
   let settled = false;
@@ -429,11 +445,12 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
   };
 
   const navigateHistory = (direction: -1 | 1): void => {
-    if (!history.length) return;
-    if (historyIndex === history.length) historyDraft = value;
-    historyIndex = Math.max(0, Math.min(history.length, historyIndex + direction));
-    value = historyIndex === history.length ? historyDraft : history[historyIndex]!;
+    const next = movePromptHistory(history, historyState, value, direction);
+    value = next.value;
+    historyState = next.state;
     cursor = value.length;
+    // Recalled prompts are plain history. Slash menus reopen only when the
+    // user types or edits '/', while an already open slash menu keeps arrows.
     menuDismissed = true;
     selected = 0;
   };

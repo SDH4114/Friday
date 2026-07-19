@@ -7,7 +7,7 @@ import test from "node:test";
 import { createFileDiff } from "../src/tools/file-diff.js";
 import { getActiveTheme, setActiveTheme, theme } from "../src/tui/theme.js";
 import { beginToolActivity, finishToolActivity, renderToolActivityPanel, startToolActivityRun, toolActivityDetailLines } from "../src/tui/tool-activity.js";
-import { restoredTuiMode } from "../src/tui/app.js";
+import { movePromptHistory, restoredTuiMode } from "../src/tui/app.js";
 
 test("sunset theme uses red, pink, and orange RGB accents", () => {
   setActiveTheme("sunset");
@@ -176,4 +176,28 @@ test("file edits produce a readable colored-panel-ready diff", () => {
   assert.match(rendered, /addition:│ \+const next = 2;/);
   assert.match(theme.diffRemoved, /48;2;145;28;48;38;2;255;238;241/);
   assert.match(theme.diffAdded, /48;2;20;104;55;38;2;238;255;242/);
+
+  const afterFirstRender = rendered;
+  renderToolActivityPanel({ write(value) { rendered += value; } }, (value, kind) => `${kind}:${value}`);
+  assert.equal(rendered, afterFirstRender, "an unchanged diff must never be printed twice");
+
+  beginToolActivity("read", "Raya is reading another.py", { path: "another.py" });
+  renderToolActivityPanel({ write(value) { rendered += value; } }, (value, kind) => `${kind}:${value}`);
+  assert.equal(rendered.match(/-const old = 1;/g)?.length, 1, "later activities must not redraw an earlier diff");
+});
+
+test("plain Up and Down navigate prompt history and restore the draft", () => {
+  const history = ["first prompt", "second prompt"];
+  let state = { index: history.length, draft: "" };
+  let current = "unfinished draft";
+
+  ({ value: current, state } = movePromptHistory(history, state, current, -1));
+  assert.equal(current, "second prompt");
+  ({ value: current, state } = movePromptHistory(history, state, current, -1));
+  assert.equal(current, "first prompt");
+  ({ value: current, state } = movePromptHistory(history, state, current, 1));
+  assert.equal(current, "second prompt");
+  ({ value: current, state } = movePromptHistory(history, state, current, 1));
+  assert.equal(current, "unfinished draft");
+  assert.equal(state.index, history.length);
 });

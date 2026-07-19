@@ -230,7 +230,12 @@ async function runGateway(config: RayaConfig): Promise<void> {
   const gateway = startTelegramService({
     token,
     allowedChatId: readSecret("RAYA_TELEGRAM_ALLOWED_CHAT_ID"),
-    onError: (error) => console.error(color(`Telegram: ${error.message}`, theme.red)),
+    onStatus: (status) => console.log(color(
+      status === "disconnected"
+        ? "Telegram: connection lost · retrying automatically"
+        : "Telegram: connection restored",
+      status === "disconnected" ? theme.yellow : theme.green
+    )),
     onPrompt: async (prompt, toolPolicy, signal) => {
       let response = "";
       const agent = createRayaAgent({
@@ -822,7 +827,9 @@ program
     const telegram = telegramToken ? startTelegramService({
       token: telegramToken,
       allowedChatId: telegramChatId,
-      onError: (error) => notifyTui(`Telegram unavailable: ${error.message}`),
+      onStatus: (status) => notifyTui(status === "disconnected"
+        ? "Telegram: connection lost · retrying automatically"
+        : "Telegram: connection restored"),
       onPrompt: async (remotePrompt, toolPolicy, signal) => sessionLock.run(async () => {
           let streamed = "";
           const remoteAgent = createRayaAgent({

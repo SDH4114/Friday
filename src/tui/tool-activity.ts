@@ -7,16 +7,17 @@ type ToolActivity = {
 };
 
 let activities: ToolActivity[] = [];
-let renderedPanelLines = 0;
+let changedActivityId: string | undefined;
 
 export function startToolActivityRun(): void {
   activities = [];
-  renderedPanelLines = 0;
+  changedActivityId = undefined;
 }
 
 export function beginToolActivity(id: string, summary: string, args: unknown): void {
   activities.push({ id, summary, args });
   activities = activities.slice(-12);
+  changedActivityId = id;
 }
 
 export function finishToolActivity(id: string, result: unknown, isError: boolean): void {
@@ -24,6 +25,7 @@ export function finishToolActivity(id: string, result: unknown, isError: boolean
   if (!activity) return;
   activity.result = result;
   activity.isError = isError;
+  changedActivityId = id;
 }
 
 export function collapseToolActivities(): void {
@@ -36,8 +38,11 @@ export function renderToolActivityPanel(
   output: { write(value: string): void },
   paint: (value: string, kind: PaintKind) => string
 ): void {
-  if (renderedPanelLines > 0) output.write(`\x1b[${renderedPanelLines}A\r\x1b[J`);
-  const lines = toolActivityDetailLines();
+  const activity = activities.find((item) => item.id === changedActivityId);
+  if (!activity) return;
+  // Append only the activity that changed. Rewriting a diff taller than the
+  // terminal viewport duplicates it in scrollback because cursor-up is capped.
+  const lines = activityLines(activity);
   for (const line of lines) {
     const trimmed = line.trimStart();
     const diffText = trimmed.startsWith("│ ") ? trimmed.slice(2) : trimmed;
@@ -54,7 +59,7 @@ export function renderToolActivityPanel(
               : "normal";
     output.write(`${paint(line, kind)}\n`);
   }
-  renderedPanelLines = lines.length;
+  changedActivityId = undefined;
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {

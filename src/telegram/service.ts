@@ -31,14 +31,14 @@ export function startTelegramService(input: {
   allowedChatId?: string;
   onPrompt: (text: string, policy: ToolExecutionPolicy, signal: AbortSignal) => Promise<string>;
   onError?: (error: Error) => void;
+  onStatus?: (status: "connected" | "disconnected", error?: Error) => void;
 }): TelegramService {
   if (input.allowedChatId && !/^-?\d+$/.test(input.allowedChatId)) throw new Error("Telegram allowed chat ID must be an integer.");
   let running = true;
   let offset = 0;
   let work = Promise.resolve();
   let retryDelayMs = 1_000;
-  let lastReportedError = "";
-  let lastReportedAt = 0;
+  let connectionStatus: "connected" | "disconnected" = "connected";
   let pollAbort: AbortController | undefined;
   let retryWake: (() => void) | undefined;
   const serviceAbort = new AbortController();
@@ -135,16 +135,18 @@ export function startTelegramService(input: {
         pollAbort = new AbortController();
         const updates = await call<TelegramUpdate[]>("getUpdates", { offset, timeout: 25, allowed_updates: ["message", "callback_query"] }, pollAbort.signal);
         retryDelayMs = 1_000;
-        lastReportedError = "";
+        if (connectionStatus === "disconnected") {
+          connectionStatus = "connected";
+          input.onStatus?.("connected");
+        }
         for (const update of updates) void handle(update);
       } catch (error) {
         if (!running) break;
         const normalized = error instanceof Error ? error : new Error(String(error));
-        const now = Date.now();
-        if (normalized.message !== lastReportedError || now - lastReportedAt >= 60_000) {
+        if (connectionStatus === "connected") {
+          connectionStatus = "disconnected";
+          input.onStatus?.("disconnected", normalized);
           input.onError?.(normalized);
-          lastReportedError = normalized.message;
-          lastReportedAt = now;
         }
         await new Promise<void>((resolve) => {
           const timer = setTimeout(resolve, retryDelayMs);
