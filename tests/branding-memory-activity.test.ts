@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { advanceSessionDeleteKey, commandSuggestions, fitSuggestionLine, modelStatusLabel, renderLargeAppleWord, renderStartupDashboard, sessionDeleteDescription } from "../src/tui/app.js";
+import { advanceSessionDeleteKey, attachSkillToPrompt, commandSuggestions, fitSuggestionLine, modelStatusLabel, renderLargeAppleWord, renderStartupDashboard, sessionDeleteDescription } from "../src/tui/app.js";
 import { formatToolActivity } from "../src/tui/render-events.js";
 import { theme } from "../src/tui/theme.js";
 import { renderMarkdown } from "../src/tui/markdown.js";
@@ -72,12 +72,23 @@ test("skills command opens a selectable attachment list and about stays lowercas
   assert.deepEqual(skills[1], {
     value: "@skill:debugging",
     label: "debugging",
-    description: "Diagnose failures",
+    description: "Attach to current message",
     needsArgument: true
   });
   const about = commandSuggestions("/abo", 4);
   assert.equal(about[0]?.value, "/about");
   assert.equal(about.some((item) => item.value === "/About"), false);
+
+  const first = attachSkillToPrompt("/skills ", 8, "debugging");
+  assert.equal(first.value, "@skill:debugging ");
+  const secondMenu = `${first.value}/skills `;
+  const second = attachSkillToPrompt(secondMenu, secondMenu.length, "implementation");
+  assert.equal(second.value, "@skill:debugging @skill:implementation ");
+  const repeatedMenu = commandSuggestions(
+    secondMenu, secondMenu.length, () => [], () => [], () => [], () => [], () => [],
+    () => [{ name: "implementation", description: "Implement changes" }]
+  );
+  assert.equal(repeatedMenu[1]?.value, "@skill:implementation");
 });
 
 test("long skill descriptions fit one physical terminal line", () => {

@@ -4,6 +4,7 @@
 
 - Interactive TUI: streaming chat, Plan/Build switching, configurable core hotkeys, slash menus, prompt history, direct terminal lines, themes, sessions, and optional Neovim editing. The footer shows the active model and reasoning level. `/skills` attaches a selected skill to the current message as `@skill:<name>`, and `/about` is lowercase.
 - One-shot CLI: run one prompt with the configured provider and tools.
+- Direct CLI commands: built-ins such as `raya git` and `raya open`, plus user-created shortcuts managed with `raya commands add|list|show|remove`. Extra invocation arguments are appended to the saved argument vector.
 - Raya Web: local multi-pane chat, workspaces, AGENTS.md and SOUL.md editing, calendar, reminders, scheduled work, and linked notes.
 - Telegram: local long-polling gateway with chat restriction and inline approval for consequential remote actions.
 - Scheduler: persistent one-time and daily reminders delivered through the configured interface path.
@@ -25,6 +26,7 @@ The authoritative list is `createDefaultTools` in `src/tools/index.ts`; mode and
 - Skills: packaged, user, workspace, and supported package skills add progressive instructions. They do not execute code or grant permissions.
 - Local models: OpenAI-compatible endpoints such as Ollama, LM Studio, vLLM, and llama.cpp can be registered without API keys.
 - Pi packages: package skills are discoverable; native Pi extensions require an explicit Raya adapter.
+- User commands: local executable shortcuts are stored separately from config and launched without a shell. They are appropriate for trusted repeatable commands, not secret storage or agent tool extension.
 
 ## Safety Model
 

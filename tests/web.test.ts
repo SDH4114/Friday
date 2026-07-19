@@ -35,13 +35,17 @@ test("Raya Web renders the operational multi-pane workspace", () => {
 
 test("top-level help lists web and every direct shortcut", () => {
   const home = mkdtempSync(join(tmpdir(), "raya-help-"));
-  const help = execFileSync(process.execPath, ["--import", "tsx", "src/cli/index.ts", "--help"], {
-    cwd: process.cwd(),
-    env: { ...process.env, RAYA_HOME: home },
-    encoding: "utf8"
-  });
-  for (const command of ["web", "git", "yt", "search", "open", "gateway", "login", "logout", "providers", "models", "config", "status", "plugin"]) {
-    assert.match(help, new RegExp(`\\b${command}\\b`));
+  for (const helpFlag of ["-h", "--help"]) {
+    const help = execFileSync(process.execPath, ["--import", "tsx", "src/cli/index.ts", helpFlag], {
+      cwd: process.cwd(),
+      env: { ...process.env, RAYA_HOME: home },
+      encoding: "utf8"
+    });
+    assert.match(help, /web \(demo\) \[options\]/);
+    assert.match(help, /raya web \(demo\)\s+Open the full Raya Web app \(demo\)/);
+    for (const command of ["commands", "web", "git", "yt", "search", "open", "gateway", "login", "logout", "providers", "models", "config", "status", "plugin"]) {
+      assert.match(help, new RegExp(`\\b${command}\\b`));
+    }
   }
 });
 

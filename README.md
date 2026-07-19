@@ -47,7 +47,8 @@ raya gateway --start
 raya gateway --restart
 raya mcp list
 raya skills list
-raya web               # open the full local Web application
+raya commands list
+raya web               # open the full local Web application demo
 ```
 
 The terminal UI is intentionally English. Every submitted prompt is echoed as `[Plan] > …` or `[Build] > …`, followed by one `Raya` heading and a readable Markdown-rendered answer. Responses support headings, bold, italic, strikethrough, links, inline code, fenced code blocks, lists, task lists, blockquotes, tables, horizontal rules, and semantic terminal colors. Tool work appears immediately in compact activity panels. File writes show a unified diff with a dark red background and bright readable text for removed lines, a dark green background and bright readable text for added lines, and `+/-` totals. Shell panels show the command, readable output, and exit code instead of a raw JSON dump. This makes coding work reviewable before the next prompt while keeping concurrent actions visually separated.
@@ -98,7 +99,7 @@ Useful interactive commands:
 /exit
 ```
 
-`/skills` opens a searchable dropdown of all built-in, user, workspace, and package skills. Selecting one inserts a visible `@skill:<name>` marker into the current input instead of sending the command immediately, so you can finish the request and attach that skill to the same message. Raya treats the marker as an explicit instruction to load the selected skill with `use_skill` before answering. The information command is lowercase: `/about`.
+`/skills` opens a compact searchable dropdown of all built-in, user, workspace, and package skills. The list displays short stable rows like `/providers`, while searching still matches both the skill name and its complete description. Selecting one inserts a visible `@skill:<name>` marker into the current input instead of sending the command immediately. Open `/skills` again anywhere in that input to attach more skills; existing markers are preserved, for example `@skill:debugging @skill:implementation fix this failure`. Raya loads every selected skill with `use_skill` before answering. The information command is lowercase: `/about`.
 
 Direct shortcuts:
 
@@ -109,6 +110,20 @@ raya serach <text>          Alias for raya search (kept for convenience)
 raya git                    git add ., ask for a commit name, commit, then push
 raya open <application>     Open an application
 ```
+
+Create your own direct commands without changing Raya's source:
+
+```bash
+raya commands add serve --description "Start the development server" -- npm run dev
+raya serve
+raya serve --port 3000 # extra arguments are appended
+
+raya commands list
+raya commands show serve
+raya commands remove serve
+```
+
+The command name uses lowercase letters, numbers, and hyphens. Raya stores the executable and each argument separately in `~/.raya/commands.json`, then launches them without a shell. This preserves spaces and prevents shell interpolation. Use `--cwd <path>` to pin a command to one directory and `--force` only when deliberately replacing an existing custom command. Built-in names such as `git`, `open`, and `commands` cannot be replaced. Custom commands are local executable shortcuts: invoking one is an explicit request to run it with your operating-system permissions.
 
 ## Tools
 
@@ -331,6 +346,7 @@ For a safer remote path, every dangerous tool action requested from Telegram—s
 - `src/telegram/service.ts` — same-process Telegram long polling and approval buttons.
 - `src/mcp/client.ts` — MCP transports, capability discovery, tool adapters, resources, prompts, and lifecycle.
 - `src/skills/` and `builtin-skills/` — skill discovery and first-run built-in installation.
+- `src/commands/` — validated storage and shell-free execution for user-created direct commands.
 - `src/session/` and `src/memory/` — JSON session state, Markdown transcripts, and memory-skill hook.
 - `src/cli/index.ts` — command entry point and session lifecycle.
 

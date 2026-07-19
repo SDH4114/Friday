@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 
-import { Command } from "commander";
+import { Command, Help } from "commander";
 import type { Agent } from "@earendil-works/pi-agent-core";
 import { getSupportedThinkingLevels, type Model } from "@earendil-works/pi-ai";
 import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { loadConfig, normalizeConfig, updateConfig, type RayaConfig } from "../config/config.js";
-import { RAYA_CONFIG_PATH, RAYA_SKILLS_DIR } from "../config/paths.js";
+import { RAYA_COMMANDS_PATH, RAYA_CONFIG_PATH, RAYA_SKILLS_DIR } from "../config/paths.js";
 import { readSecret, writeSecret } from "../config/secrets.js";
 import {
   createProviderRuntime,
@@ -28,7 +28,7 @@ import { startTelegramService } from "../telegram/service.js";
 import type { ToolExecutionPolicy } from "../types/tool.js";
 import { startScheduler } from "../scheduler/store.js";
 import { homedir } from "node:os";
-import { join, relative } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { RAYA_PLUGINS_DIR } from "../config/paths.js";
@@ -38,6 +38,13 @@ import { runWebServer } from "../web/server.js";
 import { formatMcpStatusLines, McpRuntime } from "../mcp/client.js";
 import { ensureBuiltinSkills } from "../skills/bootstrap.js";
 import { listAvailableSkills } from "../skills/loader.js";
+import {
+  addCustomCommand,
+  formatCustomCommand,
+  listCustomCommands,
+  removeCustomCommand,
+  runCustomCommand
+} from "../commands/store.js";
 import {
   createSession,
   deleteSession,
@@ -50,7 +57,15 @@ import {
 } from "../session/store.js";
 
 const program = new Command();
+const defaultHelp = new Help();
+program.configureHelp({
+  subcommandTerm: (command) => {
+    const term = defaultHelp.subcommandTerm(command);
+    return command.name() === "web" ? term.replace(/^web\b/, "web (demo)") : term;
+  }
+});
 const VERSION = "0.2.0";
+let builtinCommandNames = new Set<string>();
 setActiveTheme(loadConfig().theme);
 
 class AsyncLock {
@@ -309,7 +324,7 @@ program
   .addHelpText("after", `
 Examples and direct commands:
   raya                         Start the terminal interface
-  raya web                     Open the full Raya Web app
+  raya web (demo)              Open the full Raya Web app (demo)
   raya git                     Stage, commit, and push the current repository
   raya yt <text>               Open a YouTube search
   raya search <text>           Open a web search
@@ -318,9 +333,61 @@ Examples and direct commands:
   raya gateway --start         Run the Telegram gateway
   raya mcp list                Show configured MCP servers
   raya skills list             Show available built-in and user skills
+  raya commands add serve -- npm run dev
+                               Create a direct command, then run raya serve
   raya local add <model>       Add an Ollama/local OpenAI-compatible model
   raya "explain this repo"     Run a one-shot prompt
 `);
+
+program
+  .command("commands")
+  .alias("command")
+  .argument("[action]", "list, add, show, or remove", "list")
+  .argument("[name]", "Custom command name")
+  .argument("[command...]", "Executable and fixed arguments after --")
+  .description("Create and manage personal direct Raya commands.")
+  .option("-d, --description <text>", "Short description shown in raya --help.")
+  .option("--cwd <path>", "Always run the command from this directory.")
+  .option("--force", "Replace an existing custom command with the same name.")
+  .action((action: string, name: string | undefined, command: string[], rawOptions: unknown) => {
+    const options = commandOptions<{ description?: string; cwd?: string; force?: boolean }>(rawOptions);
+    if (action === "list") {
+      const commands = listCustomCommands();
+      if (!commands.length) {
+        console.log("No custom commands. Create one with: raya commands add <name> -- <executable> [args...]");
+        return;
+      }
+      for (const item of commands) {
+        console.log(`${item.name}\t${item.description ?? formatCustomCommand(item)}`);
+      }
+      return;
+    }
+    if (!name) throw new Error(`Usage: raya commands ${action} <name>`);
+    if (action === "show") {
+      const item = listCustomCommands().find((entry) => entry.name === name);
+      if (!item) throw new Error(`Unknown custom command: ${name}`);
+      console.log(`${item.name}: ${formatCustomCommand(item)}`);
+      if (item.description) console.log(`description: ${item.description}`);
+      if (item.cwd) console.log(`cwd: ${item.cwd}`);
+      return;
+    }
+    if (action === "remove") {
+      const removed = removeCustomCommand(name);
+      console.log(color(`Removed custom command: ${removed.name}`, theme.green));
+      return;
+    }
+    if (action !== "add") throw new Error("Commands action must be list, add, show, or remove.");
+    if (!command.length) throw new Error("Provide an executable after --, for example: raya commands add serve -- npm run dev");
+    const saved = addCustomCommand({
+      name,
+      executable: command[0]!,
+      args: command.slice(1),
+      ...(options.description?.trim() ? { description: options.description.trim() } : {}),
+      ...(options.cwd?.trim() ? { cwd: resolve(options.cwd.trim()) } : {})
+    }, { overwrite: options.force, reservedNames: builtinCommandNames });
+    console.log(color(`Created raya ${saved.name}`, theme.green));
+    console.log(`Runs: ${formatCustomCommand(saved)}`);
+  });
 
 program
   .command("local")
@@ -578,6 +645,7 @@ program
     const enabledMcp = Object.entries(config.mcpServers).filter(([, server]) => server.enabled).map(([name]) => name);
     console.log(`mcp_enabled: ${enabledMcp.length ? enabledMcp.join(", ") : "(none)"}`);
     console.log(`skills: ${listAvailableSkills().length} loaded from ${RAYA_SKILLS_DIR}`);
+    console.log(`commands: ${listCustomCommands().length} loaded from ${RAYA_COMMANDS_PATH}`);
     console.log(`logged_in: ${loggedIn}`);
   });
 
@@ -1155,6 +1223,21 @@ program
       await mcp.close();
     }
   });
+
+function commandNames(command: Command): string[] {
+  return [command.name(), command.alias()].filter(Boolean);
+}
+
+builtinCommandNames = new Set(program.commands.flatMap(commandNames));
+for (const custom of listCustomCommands()) {
+  if (builtinCommandNames.has(custom.name)) continue;
+  program
+    .command(custom.name)
+    .description(custom.description ?? `Run ${formatCustomCommand(custom)}.`)
+    .argument("[args...]", "Additional arguments appended to the saved command.")
+    .allowUnknownOption(true)
+    .action((args: string[]) => runCustomCommand(custom, args));
+}
 
 program.parseAsync().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);

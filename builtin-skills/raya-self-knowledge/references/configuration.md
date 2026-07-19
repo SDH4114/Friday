@@ -5,6 +5,7 @@
 Raya uses `~/.raya` by default and honors `RAYA_HOME` for isolation. Resolve exact paths through `src/config/paths.ts` rather than duplicating them.
 
 - `config.json`: non-secret validated settings.
+- `commands.json`: validated user-created direct commands (`name`, executable, fixed arguments, and optional description/cwd).
 - `.env`: provider and Telegram credentials with owner-only permissions.
 - `sessions.json`: conversations, workspace binding, and per-session config snapshots.
 - `USER.md` and `MEMORY.md`: bounded durable context.
@@ -35,6 +36,7 @@ Plan allows only MCP tools explicitly marked read-only. Build permits other MCP 
 ## Update Rules
 
 - Parse all stored or imported values through `normalizeConfig`.
+- Parse `commands.json` through its dedicated schema in `src/commands/store.ts`; do not merge it into general config.
 - Use `updateConfig` for partial updates; it preserves unknown keys used by future versions or integrations.
 - Keep secrets out of config, sessions, skills, logs, and fixtures.
 - Migrations should be additive, backward compatible, and regression tested.

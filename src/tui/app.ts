@@ -266,8 +266,9 @@ export function commandSuggestions(
       .map(([id, label]) => ({ value: `/thinking ${id}`, description: label }));
   }
   const skillPrefix = "/skills ";
-  if (value.startsWith(skillPrefix) && cursor >= skillPrefix.length) {
-    const query = value.slice(skillPrefix.length, cursor).trim().toLowerCase();
+  const skillStart = value.lastIndexOf(skillPrefix, cursor);
+  if (skillStart >= 0 && (skillStart === 0 || /\s/.test(value[skillStart - 1]!)) && cursor >= skillStart + skillPrefix.length) {
+    const query = value.slice(skillStart + skillPrefix.length, cursor).trim().toLowerCase();
     const skills = skillSuggestions().filter((skill) =>
       !query || `${skill.name} ${skill.description}`.toLowerCase().includes(query));
     return [
@@ -275,7 +276,7 @@ export function commandSuggestions(
       ...(skills.length ? skills.map((skill) => ({
         value: `@skill:${skill.name}`,
         label: skill.name,
-        description: skill.description,
+        description: "Attach to current message",
         needsArgument: true
       })) : [{ value: "  (none)", description: "", selectable: false }])
     ];
@@ -302,6 +303,14 @@ export function commandSuggestions(
   if (start === undefined) return [];
   const query = value.slice(start, cursor).toLowerCase();
   return slashCommands.filter((command) => command.value.toLowerCase().startsWith(query)).slice(0, 12);
+}
+
+export function attachSkillToPrompt(value: string, cursor: number, skillName: string): { value: string; cursor: number } {
+  const start = value.lastIndexOf("/skills", cursor);
+  if (start < 0 || (start > 0 && !/\s/.test(value[start - 1]!))) return { value, cursor };
+  const insertion = `@skill:${skillName} `;
+  const next = value.slice(0, start) + insertion + value.slice(cursor);
+  return { value: next, cursor: start + insertion.length };
 }
 
 function wordStart(value: string, cursor: number): number {
@@ -408,7 +417,6 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
   let cursor = Math.min(draft?.cursor ?? value.length, value.length);
   let selected = 0;
   let visible = 0;
-  let renderedLines = 0;
   let killBuffer = "";
   let historyState: PromptHistoryState = { index: history.length, draft: value };
   let deleteArmedValue: string | undefined;
@@ -425,26 +433,27 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
     const suggestions = menuDismissed ? [] : commandSuggestions(value, cursor, options?.sessionSuggestions, options?.thinkingSuggestions, options?.providerSuggestions, options?.modelSuggestions, options?.themeSuggestions, options?.skillSuggestions);
     if (selected >= suggestions.length) selected = Math.max(suggestions.length - 1, 0);
     if (suggestions[selected]?.selectable === false) selected = selectableIndex(suggestions, selected - 1, 1);
-    if (renderedLines > 0) output.write(`\x1b[${renderedLines}B\r\x1b[J\x1b[${renderedLines}A\r`);
-    output.write("\r\x1b[J");
+    // Paint over the previous frame instead of clearing the whole menu first.
+    // Clearing first creates a visible blank frame on every arrow-key press.
+    output.write("\r");
     let displayValue = value;
     if (neovimState?.mode === "VISUAL" && neovimState.selectionStart !== undefined && value.length) {
       const start = Math.min(neovimState.selectionStart, cursor);
       const end = Math.max(neovimState.selectionStart, cursor) + 1;
       displayValue = `${value.slice(0, start)}\x1b[7m${value.slice(start, end)}${theme.reset}${value.slice(end)}`;
     }
-    output.write(color(label(), theme.blue) + color(displayValue, theme.white) + "\n");
+    output.write(color(label(), theme.blue) + color(displayValue, theme.white) + "\x1b[K\n");
     const windowStart = Math.max(0, Math.min(selected - Math.floor(MAX_VISIBLE_SUGGESTIONS / 2), suggestions.length - MAX_VISIBLE_SUGGESTIONS));
     const visibleSuggestions = suggestions.slice(windowStart, windowStart + MAX_VISIBLE_SUGGESTIONS);
     let suggestionLines = 0;
     if (windowStart > 0) {
-      output.write(`${color(fitCell(`  ↑ ${windowStart} more`, terminalWidth).trimEnd(), theme.gray)}\n`);
+      output.write(`${color(fitCell(`  ↑ ${windowStart} more`, terminalWidth).trimEnd(), theme.gray)}\x1b[K\n`);
       suggestionLines += 1;
     }
     for (const [visibleIndex, suggestion] of visibleSuggestions.entries()) {
       const index = windowStart + visibleIndex;
       if (suggestion.selectable === false) {
-        output.write(`${color(fitCell(suggestion.value, terminalWidth).trimEnd(), theme.cyan)}\n`);
+        output.write(`${color(fitCell(suggestion.value, terminalWidth).trimEnd(), theme.cyan)}\x1b[K\n`);
         suggestionLines += 1;
         continue;
       }
@@ -452,20 +461,19 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
       const description = sessionDeleteDescription(suggestion.deleteValue, deleteArmedValue, suggestion.description);
       const fitted = fitSuggestionLine(suggestion.label ?? suggestion.value, description, terminalWidth);
       const line = `${marker} ${color(fitted.label, theme.white)}${fitted.description ? ` ${color(fitted.description, theme.gray)}` : ""}`;
-      output.write(`${line}\n`);
+      output.write(`${line}\x1b[K\n`);
       suggestionLines += 1;
     }
     const hiddenBelow = suggestions.length - windowStart - visibleSuggestions.length;
     if (hiddenBelow > 0) {
-      output.write(`${color(fitCell(`  ↓ ${hiddenBelow} more`, terminalWidth).trimEnd(), theme.gray)}\n`);
+      output.write(`${color(fitCell(`  ↓ ${hiddenBelow} more`, terminalWidth).trimEnd(), theme.gray)}\x1b[K\n`);
       suggestionLines += 1;
     }
     const used = compactTokens(current.contextTokens ?? 0);
     const limit = compactTokens(current.contextWindow ?? 0);
     const footer = `Context ${used}/${limit} · ${modelStatusLabel(current)} · ${current.directory} · Raya v${current.version}`;
-    output.write(color(fitCell(footer, terminalWidth).trimEnd(), theme.gray) + "\n");
+    output.write(color(fitCell(footer, terminalWidth).trimEnd(), theme.gray) + "\x1b[K\n\x1b[J");
     visible = suggestionLines;
-    renderedLines = visible + 2;
     const cursorColumn = visibleWidth(label()) + visibleWidth(value.slice(0, cursor));
     output.write(`\x1b[${visible + 2}A\r\x1b[${cursorColumn}C`);
   };
@@ -484,6 +492,14 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
   };
 
   const insertCommand = (suggestion: CommandSuggestion, addSpace: boolean): void => {
+    if (suggestion.value.startsWith("@skill:")) {
+      const attached = attachSkillToPrompt(value, cursor, suggestion.value.slice("@skill:".length));
+      value = attached.value;
+      cursor = attached.cursor;
+      selected = 0;
+      menuDismissed = false;
+      return;
+    }
     const start = activeCommandStart(value, cursor) ?? ((value.startsWith("/sessions") || value.startsWith("/thinking") || value.startsWith("/theme") || value.startsWith("/security") || value.startsWith("/providers") || value.startsWith("/models") || value.startsWith("/skills")) ? 0 : undefined);
     if (start === undefined) return;
     const insertion = `${suggestion.value}${addSpace || suggestion.needsArgument ? " " : ""}`;

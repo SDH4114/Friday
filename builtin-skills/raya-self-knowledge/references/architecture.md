@@ -8,7 +8,7 @@ Raya is not one model. She is the orchestration layer around selectable model pr
 
 ## Runtime Flow
 
-1. `src/cli/index.ts` parses commands and starts the selected interface.
+1. `src/cli/index.ts` parses built-in commands, registers validated user commands loaded by `src/commands/store.ts`, and starts the selected interface.
 2. `src/config/` resolves `~/.raya`, validates config, loads secrets separately, and bootstraps packaged assets.
 3. `src/providers/` authenticates providers and selects the model runtime.
 4. `src/mcp/` connects enabled MCP servers and exposes their tools, resources, and prompts.
@@ -31,6 +31,7 @@ Raya is not one model. She is the orchestration layer around selectable model pr
 
 - `src/agent/`: agent assembly, identity, workspace instructions, compaction, and context.
 - `src/cli/`: commands, setup, config UX, and interface startup.
+- `src/commands/`: schema-validated user command persistence and direct process execution without shell interpolation.
 - `src/config/`: schema, paths, secrets, migration, and durable settings.
 - `src/providers/`: model providers, authentication, discovery, and selection.
 - `src/tools/`: local tools and approval-aware actions.
@@ -56,12 +57,13 @@ Important entrypoints include `src/cli/index.ts`, `src/agent/create-agent.ts`, `
 
 Raya normally stores config, auth, sessions, memory, scheduled work, plugins, and skills under `~/.raya`. Tests and smoke checks should set `RAYA_HOME` to an isolated temporary directory.
 
-`config.json` is non-secret configuration. `.env` is owner-only credential storage. `sessions.json`, `web.json`, `scheduled.json`, `USER.md`, `MEMORY.md`, transcript Markdown, skills, plugins, `AGENTS.md`, `SOUL.md`, and `neovim.json` are separate stores with different lifetimes and ownership.
+`config.json` is non-secret configuration. `.env` is owner-only credential storage. `commands.json`, `sessions.json`, `web.json`, `scheduled.json`, `USER.md`, `MEMORY.md`, transcript Markdown, skills, plugins, `AGENTS.md`, `SOUL.md`, and `neovim.json` are separate stores with different lifetimes and ownership.
 
 ## Extension Points
 
 - MCP servers add external tools, resources, and prompts through config.
 - Skills add reusable instructions under `~/.raya/skills/<name>/SKILL.md`.
+- User commands add direct `raya <name> [args...]` process shortcuts through `raya commands add`; they do not add agent capabilities or bypass operating-system permissions.
 - Pi packages can contribute provider or skill capabilities.
 - Workspace `AGENTS.md` and `SOUL.md` specialize behavior for a project or user.
 

@@ -24,6 +24,7 @@ Raya A.P.P.L.E. is an open-source personal AI operating and coding assistant: Ad
 - Separate global config from session state. Theme, hotkeys, MCP registrations, and installed assets are global; model, mode, messages, and workspace are carried by a session where applicable.
 - Plan is investigation-oriented. Build adds mutation tools. Standard security requests confirmation for consequential actions; Full skips interactive approval but does not disable the blocked-command defense.
 - MCP servers and skills extend Raya differently: MCP adds executable remote/local capabilities; skills add instructions and no permissions.
+- Built-in direct CLI commands are registered in `src/cli/index.ts`; user-created direct commands are validated, stored, and executed through `src/commands/store.ts`. They are explicit local process shortcuts, not agent tools or skills.
 - The TUI, Web app, Telegram gateway, one-shot CLI, scheduler, and subagents reuse the same core agent assembly but have different interaction and approval surfaces.
 
 ## Repair or Improve Raya
