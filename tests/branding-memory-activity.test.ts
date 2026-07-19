@@ -21,7 +21,7 @@ test("startup dashboard is Raya-specific, responsive, and geometrically aligned"
     memory: "Enabled",
     headerStyle: "small" as const,
     session: "Fresh session",
-    version: "0.2.0"
+    version: "0.1.0"
   };
   const wide = renderStartupDashboard(info, 120);
   assert.ok(wide.every((line) => visibleWidth(line) === 120));

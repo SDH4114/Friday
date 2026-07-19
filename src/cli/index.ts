@@ -64,7 +64,7 @@ program.configureHelp({
     return command.name() === "web" ? term.replace(/^web\b/, "web (demo)") : term;
   }
 });
-const VERSION = "0.2.0";
+const VERSION = "0.1.0";
 let builtinCommandNames = new Set<string>();
 setActiveTheme(loadConfig().theme);
 
@@ -152,6 +152,23 @@ async function chooseProvider(runtime: ReturnType<typeof createProviderRuntime>,
   try {
     const answer = (await rl.question(`\nProvider [${fallback}] > `)).trim();
     if (!answer) return fallback;
+    const numeric = Number(answer);
+    if (Number.isInteger(numeric) && numeric >= 1 && numeric <= numbered.length) {
+      return numbered[numeric - 1]!.id;
+    }
+    return answer;
+  } finally {
+    rl.close();
+  }
+}
+
+async function chooseOptionalProvider(runtime: ReturnType<typeof createProviderRuntime>): Promise<string | undefined> {
+  printProviderMenu(runtime);
+  const numbered = availablePreferredProviders(runtime);
+  const rl = readline.createInterface({ input, output });
+  try {
+    const answer = (await rl.question("\nProvider (optional; press Enter to skip) > ")).trim();
+    if (!answer) return undefined;
     const numeric = Number(answer);
     if (Number.isInteger(numeric) && numeric >= 1 && numeric <= numbered.length) {
       return numbered[numeric - 1]!.id;
@@ -269,7 +286,7 @@ async function runGateway(config: RayaConfig): Promise<void> {
   const runtime = createProviderRuntime();
   const model = getConfiguredModel(runtime, config.provider, config.model);
   if (!(await isProviderConfigured(runtime, config.provider, model.id))) {
-    throw new Error("OpenAI/provider login is required before starting the Telegram gateway.");
+    throw new Error("The selected provider must be connected before starting the Telegram gateway.");
   }
   const mcp = await connectConfiguredMcp(config);
   let session = getOrCreateActiveSession(config);
@@ -460,13 +477,13 @@ program
 program
   .command("login")
   .argument("[provider]", "Provider id to login. Defaults to configured provider.")
-  .description("Login to OpenAI Codex through the ChatGPT/Codex OAuth flow.")
+  .description("Choose and connect an optional AI provider.")
   .action(async (providerArg?: string) => {
     const config = loadConfig();
     const runtime = createProviderRuntime();
     const provider = providerArg ?? (await chooseProvider(runtime, config.provider));
     await loginProvider(runtime, provider);
-    console.log(color("Saved provider OAuth session securely.", theme.green));
+    console.log(color("Saved provider credential securely.", theme.green));
   });
 
 program
@@ -779,14 +796,35 @@ program
       if (await isProviderConfigured(runtime, provider.id)) connectedProviders.add(provider.id);
     }));
     if (options.runModel) config = { ...config, model: options.runModel };
-    let model = getConfiguredModel(runtime, config.provider, options.runModel ?? config.model);
+    let modelId = options.runModel ?? config.model;
 
-    if (!(await isProviderConfigured(runtime, config.provider, model.id))) {
-      console.log(color(`No credential found for ${config.provider}. Starting login.\n`, theme.yellow));
-      await loginProvider(runtime, config.provider);
-      connectedProviders.add(config.provider);
-      console.log(color("Login complete.\n", theme.green));
+    if (!(await isProviderConfigured(runtime, config.provider, modelId))) {
+      if (prompt) {
+        throw new Error(`Provider "${config.provider}" is not connected. Run raya login, or configure another/local provider first.`);
+      }
+
+      console.log(color("No provider is connected. Provider setup is optional; OpenAI Codex is not required.", theme.yellow));
+      const provider = await chooseOptionalProvider(runtime);
+      if (!provider) {
+        console.log("Provider setup skipped. Later, run raya login or raya local add <model>.");
+        return;
+      }
+
+      getProvider(runtime, provider);
+      modelId = provider === config.provider && runtime.models.getModel(provider, modelId)
+        ? modelId
+        : runtime.models.getModels(provider)[0]?.id ?? "";
+      if (!modelId) throw new Error(`Provider has no known models: ${provider}`);
+      if (!(await isProviderConfigured(runtime, provider, modelId))) {
+        await loginProvider(runtime, provider);
+      }
+      connectedProviders.add(provider);
+      config = { ...config, provider, model: modelId };
+      updateConfig({ provider, model: modelId });
+      console.log(color(`${provider} connected.\n`, theme.green));
     }
+
+    let model = getConfiguredModel(runtime, config.provider, modelId);
 
     let session = createSession(config);
 

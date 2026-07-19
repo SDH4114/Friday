@@ -77,7 +77,7 @@ const defaultConfig: RayaConfig = ConfigSchema.parse({});
 
 export function normalizeConfig(value: unknown): RayaConfig {
   const raw = value && typeof value === "object" ? { ...(value as Record<string, unknown>) } : {};
-  // Migrate pre-0.2 settings without making users edit JSON by hand.
+  // Migrate legacy settings without making users edit JSON by hand.
   if (raw.mode === "edit") raw.mode = "build";
   delete raw.neovim_mode;
   delete raw.vim_mode;

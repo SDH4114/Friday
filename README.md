@@ -2,11 +2,11 @@
 
 Raya is an MIT-licensed, open-source personal AI PC assistant and coding-agent harness for macOS and Linux. It is deliberately built for a useful daily workflow: one terminal session can work on code, inspect and edit local files, run shell commands, search the web, control applications, and optionally stay reachable through your own Telegram bot.
 
-Raya uses **OpenAI Codex via ChatGPT Plus/Pro/Codex OAuth**, API-key providers through the `@earendil-works/pi-ai` adapter, and local OpenAI-compatible inference servers such as Ollama, LM Studio, vLLM, and llama.cpp. It uses `@earendil-works/pi-agent-core` rather than reimplementing an agent loop.
+Raya supports **OpenAI Codex via ChatGPT Plus/Pro/Codex OAuth**, API-key providers through the `@earendil-works/pi-ai` adapter, and local OpenAI-compatible inference servers such as Ollama, LM Studio, vLLM, and llama.cpp. OpenAI Codex is optional: you can connect a different provider, use a local model, or skip provider setup until later. Raya uses `@earendil-works/pi-agent-core` rather than reimplementing an agent loop.
 
 ## Install
 
-macOS and Linux only (Windows is not supported in v1):
+macOS and Linux only (Windows is not supported in the current release):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/SDH4114/Raya-APPLE/prime/install.sh | bash
@@ -33,10 +33,11 @@ raya
 raya
 ```
 
-If Raya has no credential it opens the OpenAI Codex OAuth flow. Complete it with the ChatGPT/Codex account that has your subscription. The first interactive launch also offers an optional Telegram bot token and optional allowed chat ID; no manual config editing is needed.
+If Raya has no configured provider, the first interactive launch displays the available providers. Choose any provider, or press Enter to skip setup. OpenAI Codex is not required. You can connect a provider later with `raya login`, or add a local OpenAI-compatible model with `raya local add`. Telegram setup is also optional and is offered only after a provider is ready.
 
 ```bash
-raya login             # repeat OAuth login
+raya login             # choose and connect a provider
+raya login anthropic   # connect a specific provider
 raya "explain this repository"  # one-shot prompt
 raya status
 raya models
@@ -348,7 +349,7 @@ For a safer remote path, every dangerous tool action requested from Telegram—s
 - `src/session/` and `src/memory/` — JSON session state, Markdown transcripts, and memory-skill hook.
 - `src/cli/index.ts` — command entry point and session lifecycle.
 
-## v1 assumptions and known limits
+## Current assumptions and known limits
 
 - OpenAI Codex uses OAuth; Anthropic, OpenRouter, OpenCode Zen, and Hugging Face use their respective API keys.
 - Shell and filesystem access are **not sandboxed**; run Raya only in a trusted workspace.
@@ -356,7 +357,7 @@ For a safer remote path, every dangerous tool action requested from Telegram—s
 - Telegram runs in the local CLI process, not on a server.
 - Native Pi CLI extensions still require a Raya adapter; MCP and instruction skills are supported directly.
 
-## v2 TODO
+## Later roadmap
 
 - Provider-specific setup and local model discovery improvements.
 - Real sandboxing and configurable local approvals.

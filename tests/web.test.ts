@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { renderWebApp } from "../src/web/ui.js";
 
 test("Raya Web includes every requested application area", () => {
-  const html = renderWebApp("0.2.0");
+  const html = renderWebApp("0.1.0");
   for (const label of ["Chat", "Calendar", "Reminders", "Scheduled", "Workspaces", "Notes", "AGENTS.md", "SOUL.md", "Telegram"]) {
     assert.match(html, new RegExp(label.replace(".", "\\.")));
   }
@@ -15,7 +15,7 @@ test("Raya Web includes every requested application area", () => {
 });
 
 test("Raya Web renders the operational multi-pane workspace", () => {
-  const html = renderWebApp("0.2.0");
+  const html = renderWebApp("0.1.0");
   for (const marker of [
     'class="iconbar"',
     'id="session-list"',
@@ -46,6 +46,29 @@ test("top-level help lists web and every direct shortcut", () => {
     for (const command of ["commands", "web", "git", "yt", "search", "open", "gateway", "login", "logout", "providers", "models", "config", "status", "plugin"]) {
       assert.match(help, new RegExp(`\\b${command}\\b`));
     }
+  }
+});
+
+test("first launch can skip provider setup without starting OpenAI Codex OAuth", () => {
+  const home = mkdtempSync(join(tmpdir(), "raya-optional-provider-"));
+  try {
+    const env = { ...process.env, RAYA_HOME: home };
+    for (const key of ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "OPENCODE_API_KEY", "HF_TOKEN", "HUGGINGFACE_API_KEY"]) {
+      delete env[key];
+    }
+    const result = spawnSync(process.execPath, ["--import", "tsx", "src/cli/index.ts"], {
+      cwd: process.cwd(),
+      env,
+      input: "\n",
+      encoding: "utf8",
+      timeout: 15_000
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /Provider setup is optional; OpenAI Codex is not required/);
+    assert.match(result.stdout, /Provider setup skipped/);
+    assert.doesNotMatch(result.stdout, /Open this URL to authorize Raya/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
   }
 });
 
