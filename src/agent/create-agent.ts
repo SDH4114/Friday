@@ -5,6 +5,7 @@ import { createDefaultTools } from "../tools/index.js";
 import type { ToolExecutionPolicy } from "../types/tool.js";
 import { createSystemPrompt } from "./system-prompt.js";
 import { createSubagentTool } from "../tools/subagent.js";
+import type { McpRuntime } from "../mcp/client.js";
 
 export function createRayaTools(input: {
   config: RayaConfig;
@@ -12,10 +13,12 @@ export function createRayaTools(input: {
   models: Models;
   toolPolicy?: ToolExecutionPolicy;
   workspace?: string;
+  mcp?: McpRuntime;
 }) {
   return [
     ...createDefaultTools(input.config, input.toolPolicy, input.workspace),
-    createSubagentTool(input.config, input.model, input.models, input.toolPolicy, input.workspace)
+    ...(input.mcp?.createTools(input.config, input.toolPolicy) ?? []),
+    createSubagentTool(input.config, input.model, input.models, input.toolPolicy, input.workspace, input.mcp)
   ];
 }
 
@@ -26,10 +29,11 @@ export function createRayaAgent(input: {
   onEvent: (event: AgentEvent) => Promise<void> | void;
   toolPolicy?: ToolExecutionPolicy;
   workspace?: string;
+  mcp?: McpRuntime;
 }): Agent {
   const agent = new Agent({
     initialState: {
-      systemPrompt: createSystemPrompt(input.workspace),
+      systemPrompt: createSystemPrompt(input.workspace, input.mcp?.instructions),
       model: input.model,
       thinkingLevel: input.config.thinkingLevel,
       tools: createRayaTools(input),

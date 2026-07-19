@@ -15,6 +15,7 @@ export const RAYA_MEMORY_PATH = join(RAYA_HOME, "MEMORY.md");
 export const RAYA_SCHEDULE_PATH = join(RAYA_HOME, "scheduled.json");
 export const RAYA_WEB_PATH = join(RAYA_HOME, "web.json");
 export const RAYA_PLUGINS_DIR = join(RAYA_HOME, "plugins");
+export const RAYA_SKILLS_DIR = join(RAYA_HOME, "skills");
 
 export function ensureRayaHome(): void {
   if (!existsSync(RAYA_HOME)) {

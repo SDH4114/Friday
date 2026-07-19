@@ -96,6 +96,8 @@ const slashCommands: CommandSuggestion[] = [
   { value: "/theme", description: "Choose and immediately apply the global theme" },
   { value: "/security", description: "Choose security mode" },
   { value: "/sessions", description: "Create/open sessions · dd deletes selected" },
+  { value: "/mcps", description: "Show configured and enabled MCP servers" },
+  { value: "/skills", description: "Show available skills" },
   { value: "/About", description: "What Raya is and what she can do" },
   { value: "/status", description: "Show current status" },
   { value: "/clear", description: "Clear this conversation" },
@@ -147,7 +149,7 @@ function dashboardTitle(width: number, title: string): string {
 function statusLines(info: TuiSessionInfo): string[] {
   const brand = info.headerStyle === "large"
     ? [...largeRayaLogo, "       A.P.P.L.E. SYSTEM"]
-    : ["        ◢◤  RAYA  ◥◣", "       A.P.P.L.E. CORE"];
+    : ["        ◢◤  RAYA  ◥◣", "       A.P.P.L.E."];
   return [
     ...brand,
     "",

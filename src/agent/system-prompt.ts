@@ -7,7 +7,7 @@ function loadWorkspaceInstruction(name: "AGENTS.md" | "SOUL.md", workspace: stri
   return findPreferredWorkspaceInstruction(name, RAYA_HOME, workspace)?.content;
 }
 
-export function createSystemPrompt(workspace = process.cwd()): string {
+export function createSystemPrompt(workspace = process.cwd(), mcpInstructions = ""): string {
   const agents = loadWorkspaceInstruction("AGENTS.md", workspace);
   const soul = loadWorkspaceInstruction("SOUL.md", workspace);
   return `You are Raya, a personal AI PC assistant and coding agent running in a user's terminal.
@@ -37,5 +37,5 @@ Rules:
 - When the user refers to earlier work and the current conversation is insufficient, search previous sessions instead of pretending to remember.
 
 ${agents ? `## Workspace instructions (AGENTS.md)\n${agents}` : ""}
-${soul ? `## Raya personality (SOUL.md, user-authored)\n${soul}` : ""}\n\n# Persistent memory (frozen at session start)\n${memorySnapshot()}${loadSkillContext()}`;
+${soul ? `## Raya personality (SOUL.md, user-authored)\n${soul}` : ""}\n\n# Persistent memory (frozen at session start)\n${memorySnapshot()}${loadSkillContext()}${mcpInstructions ? `\n\n${mcpInstructions}` : ""}`;
 }

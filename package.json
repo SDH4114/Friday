@@ -8,6 +8,7 @@
   },
   "files": [
     "dist",
+    "builtin-skills",
     "install.sh",
     "README.md",
     "LICENSE"
@@ -29,7 +30,8 @@
     "codex",
     "chatgpt",
     "telegram",
-    "pc-assistant"
+    "pc-assistant",
+    "mcp"
   ],
   "author": "",
   "license": "MIT",
@@ -40,6 +42,7 @@
     "@earendil-works/pi-agent-core": "^0.80.3",
     "@earendil-works/pi-ai": "^0.80.3",
     "@earendil-works/pi-tui": "^0.80.3",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "commander": "^14.0.2",
     "zod": "^4.1.13"
   },

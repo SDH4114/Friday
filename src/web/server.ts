@@ -24,6 +24,7 @@ import {
   saveCalendarEvent,
   saveNote
 } from "./store.js";
+import { McpRuntime } from "../mcp/client.js";
 
 type Approval = {
   id: string;
@@ -101,7 +102,14 @@ function listWorkspaceFiles(root: string): Array<{ path: string; type: "file" | 
 export async function runWebServer(options: WebServerOptions): Promise<void> {
   let config = loadConfig();
   const runtime = createProviderRuntime();
+  const mcp = await McpRuntime.connect(config, {
+    clientVersion: options.version,
+    onStatus: (status) => {
+      if (status.enabled && !status.connected) console.error(`MCP ${status.name}: unavailable · ${status.error}`);
+    }
+  });
   let session = getOrCreateActiveSession(config);
+  session.config = { ...session.config, mcpServers: config.mcpServers };
   let queue = Promise.resolve();
   let approval: Approval | undefined;
 
@@ -142,6 +150,7 @@ export async function runWebServer(options: WebServerOptions): Promise<void> {
       models: runtime.models,
       workspace,
       toolPolicy: remotePolicy ?? policy(),
+      mcp,
       onEvent: (event) => {
         if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
           responseText += event.assistantMessageEvent.delta;
@@ -401,5 +410,6 @@ export async function runWebServer(options: WebServerOptions): Promise<void> {
   stopScheduler();
   approval?.resolve(false);
   await telegram?.stop();
+  await mcp.close();
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
 }

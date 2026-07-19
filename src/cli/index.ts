@@ -6,7 +6,7 @@ import { getSupportedThinkingLevels, type Model } from "@earendil-works/pi-ai";
 import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { loadConfig, normalizeConfig, updateConfig, type RayaConfig } from "../config/config.js";
-import { RAYA_CONFIG_PATH } from "../config/paths.js";
+import { RAYA_CONFIG_PATH, RAYA_SKILLS_DIR } from "../config/paths.js";
 import { readSecret, writeSecret } from "../config/secrets.js";
 import {
   createProviderRuntime,
@@ -34,6 +34,9 @@ import { RAYA_PLUGINS_DIR } from "../config/paths.js";
 import { openApplication, openUrl, runGitShortcut, webSearchUrl, youtubeSearchUrl } from "./shortcuts.js";
 import { normalizePiPackageName } from "../plugins/package.js";
 import { runWebServer } from "../web/server.js";
+import { formatMcpStatusLines, McpRuntime } from "../mcp/client.js";
+import { ensureBuiltinSkills } from "../skills/bootstrap.js";
+import { listAvailableSkills } from "../skills/loader.js";
 import {
   createSession,
   deleteSession,
@@ -153,12 +156,38 @@ function buildToolPolicy(config: RayaConfig): ToolExecutionPolicy {
   };
 }
 
-function applyConfigToAgent(agent: Agent, config: RayaConfig, models: ReturnType<typeof createProviderRuntime>["models"], model?: Model<any>): void {
+function applyConfigToAgent(agent: Agent, config: RayaConfig, models: ReturnType<typeof createProviderRuntime>["models"], model?: Model<any>, mcp?: McpRuntime): void {
   if (model) {
     agent.state.model = model;
   }
   agent.state.thinkingLevel = config.thinkingLevel;
-  agent.state.tools = createRayaTools({ config, model: model ?? agent.state.model, models, toolPolicy: buildToolPolicy(config) });
+  agent.state.tools = createRayaTools({ config, model: model ?? agent.state.model, models, toolPolicy: buildToolPolicy(config), mcp });
+}
+
+async function connectConfiguredMcp(config: RayaConfig, options: { only?: string; strict?: boolean; quiet?: boolean } = {}): Promise<McpRuntime> {
+  const mcp = await McpRuntime.connect(config, { clientVersion: VERSION, only: options.only, strict: options.strict });
+  if (!options.quiet) {
+    for (const status of mcp.statuses.filter((item) => item.enabled && !item.connected)) {
+      console.error(color(`MCP ${status.name}: unavailable · ${status.error}`, theme.yellow));
+    }
+    if (mcp.connectedCount) {
+      const toolCount = mcp.statuses.reduce((sum, item) => sum + item.tools, 0);
+      console.log(color(`MCP: ${mcp.connectedCount} server${mcp.connectedCount === 1 ? "" : "s"} connected · ${toolCount} tools`, theme.cyan));
+    }
+  }
+  return mcp;
+}
+
+function collectOption(value: string, previous: string[]): string[] {
+  return [...previous, value];
+}
+
+function assignments(values: string[], label: string): Record<string, string> {
+  return Object.fromEntries(values.map((value) => {
+    const separator = value.indexOf("=");
+    if (separator <= 0) throw new Error(`${label} must use KEY=VALUE.`);
+    return [value.slice(0, separator), value.slice(separator + 1)];
+  }));
 }
 
 function commandOptions<T extends Record<string, unknown>>(value: unknown): T {
@@ -226,43 +255,50 @@ async function runGateway(config: RayaConfig): Promise<void> {
   if (!(await isProviderConfigured(runtime, config.provider, model.id))) {
     throw new Error("OpenAI/provider login is required before starting the Telegram gateway.");
   }
+  const mcp = await connectConfiguredMcp(config);
   let session = getOrCreateActiveSession(config);
-  const gateway = startTelegramService({
-    token,
-    allowedChatId: readSecret("RAYA_TELEGRAM_ALLOWED_CHAT_ID"),
-    onStatus: (status) => console.log(color(
-      status === "disconnected"
-        ? "Telegram: connection lost · retrying automatically"
-        : "Telegram: connection restored",
-      status === "disconnected" ? theme.yellow : theme.green
-    )),
-    onPrompt: async (prompt, toolPolicy, signal) => {
-      let response = "";
-      const agent = createRayaAgent({
-        config: session.config,
-        model: getConfiguredModel(runtime, session.config.provider, session.config.model),
-        models: runtime.models,
-        toolPolicy,
-        onEvent: (event) => {
-          if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") response += event.assistantMessageEvent.delta;
-        }
-      });
-      agent.state.messages = session.messages;
-      await promptWithAbort(agent, prompt, signal);
-      session.messages = agent.state.messages;
-      saveSession(session);
-      return response || lastAssistantText(agent);
-    }
-  });
-  const chatId=readSecret("RAYA_TELEGRAM_ALLOWED_CHAT_ID");
-  const stopScheduled=startScheduler(async (task)=>{
-    if (!chatId) throw new Error("Scheduled delivery requires a Telegram chat ID. Run raya gateway --setup.");
-    await gateway.sendMessage(chatId,`Reminder: ${task.message}`);
-  }, (error) => console.error(color(`Scheduler: ${error.message}`, theme.red)));
-  console.log(color("Telegram gateway running. Press Ctrl+C to stop.", theme.cyan));
-  await new Promise<void>((resolve) => process.once("SIGINT", resolve));
-  stopScheduled();
-  await gateway.stop();
+  session.config = { ...session.config, mcpServers: config.mcpServers };
+  try {
+    const gateway = startTelegramService({
+      token,
+      allowedChatId: readSecret("RAYA_TELEGRAM_ALLOWED_CHAT_ID"),
+      onStatus: (status) => console.log(color(
+        status === "disconnected"
+          ? "Telegram: connection lost · retrying automatically"
+          : "Telegram: connection restored",
+        status === "disconnected" ? theme.yellow : theme.green
+      )),
+      onPrompt: async (prompt, toolPolicy, signal) => {
+        let response = "";
+        const agent = createRayaAgent({
+          config: session.config,
+          model: getConfiguredModel(runtime, session.config.provider, session.config.model),
+          models: runtime.models,
+          toolPolicy,
+          mcp,
+          onEvent: (event) => {
+            if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") response += event.assistantMessageEvent.delta;
+          }
+        });
+        agent.state.messages = session.messages;
+        await promptWithAbort(agent, prompt, signal);
+        session.messages = agent.state.messages;
+        saveSession(session);
+        return response || lastAssistantText(agent);
+      }
+    });
+    const chatId=readSecret("RAYA_TELEGRAM_ALLOWED_CHAT_ID");
+    const stopScheduled=startScheduler(async (task)=>{
+      if (!chatId) throw new Error("Scheduled delivery requires a Telegram chat ID. Run raya gateway --setup.");
+      await gateway.sendMessage(chatId,`Reminder: ${task.message}`);
+    }, (error) => console.error(color(`Scheduler: ${error.message}`, theme.red)));
+    console.log(color("Telegram gateway running. Press Ctrl+C to stop.", theme.cyan));
+    await new Promise<void>((resolve) => process.once("SIGINT", resolve));
+    stopScheduled();
+    await gateway.stop();
+  } finally {
+    await mcp.close();
+  }
 }
 
 program
@@ -279,6 +315,8 @@ Examples and direct commands:
   raya open <application>      Open a desktop application
   raya gateway --setup         Configure Telegram delivery
   raya gateway --start         Run the Telegram gateway
+  raya mcp list                Show configured MCP servers
+  raya skills list             Show available built-in and user skills
   raya local add <model>       Add an Ollama/local OpenAI-compatible model
   raya "explain this repo"     Run a one-shot prompt
 `);
@@ -422,6 +460,98 @@ program
   });
 
 program
+  .command("mcp")
+  .argument("[action]", "list, add, enable, disable, remove, or test", "list")
+  .argument("[name]", "MCP server name")
+  .description("Configure and diagnose MCP servers.")
+  .option("--command <command>", "Executable for a local stdio MCP server.")
+  .option("--arg <value>", "Repeatable stdio argument. Use --arg=-y for values beginning with -.", collectOption, [])
+  .option("--cwd <path>", "Working directory for a stdio server.")
+  .option("--env <KEY=VALUE>", "Repeatable environment value. Supports ${ENV_VAR} placeholders.", collectOption, [])
+  .option("--url <url>", "Streamable HTTP MCP endpoint.")
+  .option("--header <KEY=VALUE>", "Repeatable HTTP header. Supports ${ENV_VAR} placeholders.", collectOption, [])
+  .option("--approval <mode>", "always, writes, or never", "writes")
+  .option("--timeout <ms>", "Connection timeout in milliseconds.", "30000")
+  .option("--tool-timeout <ms>", "Tool call timeout in milliseconds.", "120000")
+  .option("--disabled", "Add the server in a disabled state.")
+  .action(async (action: string, name: string | undefined, rawOptions: unknown) => {
+    const config = loadConfig();
+    const options = commandOptions<{
+      command?: string; arg: string[]; cwd?: string; env: string[]; url?: string; header: string[];
+      approval: "always" | "writes" | "never"; timeout: string; toolTimeout: string; disabled?: boolean;
+    }>(rawOptions);
+    if (action === "list") {
+      const entries = Object.entries(config.mcpServers);
+      if (!entries.length) {
+        console.log(`No MCP servers configured. Add one with: raya mcp add <name> --command <executable>`);
+        return;
+      }
+      for (const [serverName, server] of entries.sort(([a], [b]) => a.localeCompare(b))) {
+        const target = server.transport === "stdio" ? [server.command, ...server.args].join(" ") : server.url;
+        console.log(`${serverName}\t${server.enabled ? "enabled" : "disabled"}\t${server.transport}\t${server.approval}\t${target}`);
+      }
+      return;
+    }
+    if (!name) throw new Error(`Usage: raya mcp ${action} <name>`);
+    if (action === "enable" || action === "disable") {
+      const current = config.mcpServers[name];
+      if (!current) throw new Error(`Unknown MCP server: ${name}`);
+      updateConfig({ mcpServers: { ...config.mcpServers, [name]: { ...current, enabled: action === "enable" } } });
+      console.log(`MCP ${name}: ${action === "enable" ? "enabled" : "disabled"}.`);
+      return;
+    }
+    if (action === "remove") {
+      if (!config.mcpServers[name]) throw new Error(`Unknown MCP server: ${name}`);
+      const next = { ...config.mcpServers };
+      delete next[name];
+      updateConfig({ mcpServers: next });
+      console.log(`Removed MCP server ${name}.`);
+      return;
+    }
+    if (action === "test") {
+      const mcp = await connectConfiguredMcp(config, { only: name, strict: true, quiet: true });
+      try {
+        const status = mcp.statuses.find((item) => item.name === name);
+        console.log(color(`MCP ${name}: connected · ${status?.tools ?? 0} tools`, theme.green));
+      } finally {
+        await mcp.close();
+      }
+      return;
+    }
+    if (action !== "add") throw new Error("MCP action must be list, add, enable, disable, remove, or test.");
+    if (Boolean(options.command) === Boolean(options.url)) throw new Error("Use exactly one of --command (stdio) or --url (Streamable HTTP).");
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(name)) throw new Error("MCP name may contain letters, numbers, dots, underscores, and hyphens.");
+    const timeoutMs = Number(options.timeout);
+    const toolTimeoutMs = Number(options.toolTimeout);
+    if (!Number.isInteger(timeoutMs) || !Number.isInteger(toolTimeoutMs)) throw new Error("MCP timeouts must be integer milliseconds.");
+    const common = { enabled: !options.disabled, approval: options.approval, timeoutMs, toolTimeoutMs };
+    const server = options.command
+      ? { ...common, transport: "stdio" as const, command: options.command, args: options.arg, ...(options.cwd ? { cwd: options.cwd } : {}), env: assignments(options.env, "--env") }
+      : { ...common, transport: "http" as const, url: options.url!, headers: assignments(options.header, "--header") };
+    const normalized = normalizeConfig({ ...config, mcpServers: { ...config.mcpServers, [name]: server } });
+    updateConfig({ mcpServers: normalized.mcpServers });
+    console.log(color(`Saved MCP server ${name} (${server.transport}, ${server.enabled ? "enabled" : "disabled"}).`, theme.green));
+    console.log(`Test it with: raya mcp test ${name}`);
+  });
+
+program
+  .command("skills")
+  .argument("[action]", "list or sync", "list")
+  .description("List skills or install missing built-in Raya skills.")
+  .action((action: string) => {
+    if (action === "sync") {
+      const installed = ensureBuiltinSkills();
+      console.log(installed.length ? `Installed built-in skills: ${installed.join(", ")}` : "Built-in skills are already installed.");
+      console.log(`Skills directory: ${RAYA_SKILLS_DIR}`);
+      return;
+    }
+    if (action !== "list") throw new Error("Skills action must be list or sync.");
+    const skills = listAvailableSkills();
+    if (!skills.length) { console.log("(none)"); return; }
+    for (const skill of skills) console.log(`${skill.name}\t${skill.path}`);
+  });
+
+program
   .command("status")
   .description("Show local Raya configuration and auth status.")
   .action(async () => {
@@ -438,6 +568,9 @@ program
     console.log(`design: ${config.headerStyle}`);
     console.log(`theme: ${config.theme}`);
     console.log(`neovim_mode: ${config.neovim_mode}`);
+    const enabledMcp = Object.entries(config.mcpServers).filter(([, server]) => server.enabled).map(([name]) => name);
+    console.log(`mcp_enabled: ${enabledMcp.length ? enabledMcp.join(", ") : "(none)"}`);
+    console.log(`skills: ${listAvailableSkills().length} loaded from ${RAYA_SKILLS_DIR}`);
     console.log(`logged_in: ${loggedIn}`);
   });
 
@@ -583,27 +716,31 @@ program
       saveSession(session);
     }
 
+    const mcp = await connectConfiguredMcp(config);
+
     const agent = createRayaAgent({
       config,
       model,
       models: runtime.models,
       onEvent: renderAgentEvent,
-      toolPolicy: buildToolPolicy(config)
+      toolPolicy: buildToolPolicy(config),
+      mcp
     });
     agent.state.messages = session.messages;
     const sessionLock = new AsyncLock();
 
     const rebuildAgent = (nextSession = session): Agent => {
-      const globalTheme = loadConfig().theme;
-      nextSession.config = { ...nextSession.config, theme: globalTheme };
-      setActiveTheme(globalTheme);
+      const globalConfig = loadConfig();
+      nextSession.config = { ...nextSession.config, theme: globalConfig.theme, mcpServers: globalConfig.mcpServers };
+      setActiveTheme(globalConfig.theme);
       const nextModel = getConfiguredModel(runtime, nextSession.config.provider, nextSession.config.model);
       const nextAgent = createRayaAgent({
         config: nextSession.config,
         model: nextModel,
         models: runtime.models,
         onEvent: renderAgentEvent,
-        toolPolicy: buildToolPolicy(nextSession.config)
+        toolPolicy: buildToolPolicy(nextSession.config),
+        mcp
       });
       nextAgent.state.messages = nextSession.messages;
       model = nextModel;
@@ -627,6 +764,8 @@ program
         "/theme                         choose and apply the global theme",
         "/security                      choose Standard or Full access",
         "/sessions                     create, open, or delete a session",
+        "/mcps                         show configured and enabled MCP servers",
+        "/skills                       show available skills",
         "/About                        what Raya is and what she can do",
         "/status                       show current config",
         "/clear                        clear current session messages",
@@ -659,6 +798,7 @@ program
           "- remember durable preferences and project knowledge in USER.md and MEMORY.md;",
           "- search and read previous Raya sessions;",
           "- use skills, subagents, schedules, and Telegram integration;",
+          "- connect to local and remote MCP servers, tools, resources, and prompts;",
           "- work safely in Plan mode or make changes in Build mode.",
           "",
           "The goal of Raya is simple: turn a conversation into completed, verifiable work while becoming more useful to you over time."
@@ -718,7 +858,7 @@ program
           return;
         }
         config = { ...config, thinkingLevel: requested as RayaConfig["thinkingLevel"] };
-        applyConfigToAgent(activeAgent, config, runtime.models, model);
+        applyConfigToAgent(activeAgent, config, runtime.models, model, mcp);
         persist(activeAgent);
         return;
       }
@@ -745,7 +885,7 @@ program
           return;
         }
         config = { ...config, securityMode };
-        applyConfigToAgent(activeAgent, config, runtime.models, model);
+        applyConfigToAgent(activeAgent, config, runtime.models, model, mcp);
         persist(activeAgent);
         console.log(color(`Security: ${securityMode === "full" ? "Full access" : "Standard"}`, theme.green));
         return;
@@ -805,9 +945,22 @@ program
         console.log(`Design    : ${config.headerStyle}`);
         console.log(`Theme     : ${themeLabels[config.theme]}`);
         console.log(`Neovim mode  : ${config.neovim_mode ? "Enabled" : "Disabled"}`);
+        const enabledMcp = Object.entries(config.mcpServers).filter(([, server]) => server.enabled).map(([serverName]) => serverName);
+        console.log(`MCP servers   : ${enabledMcp.length ? enabledMcp.join(", ") : "None"}`);
+        console.log(`Skills        : ${listAvailableSkills().length}`);
         console.log(`Session   : ${session.name}`);
         console.log(`Config    : ${RAYA_CONFIG_PATH}`);
         console.log("Credentials: stored securely");
+        return;
+      }
+
+      if (name === "mcps" || name === "mcp") {
+        console.log(formatMcpStatusLines(mcp.statuses).join("\n"));
+        return;
+      }
+
+      if (name === "skills") {
+        for (const skill of listAvailableSkills()) console.log(`${skill.name.padEnd(22)} ${skill.path}`);
         return;
       }
 
@@ -815,10 +968,14 @@ program
     };
 
     if (prompt) {
-      await agent.prompt(prompt);
-      await agent.waitForIdle();
-      persist(agent);
-      console.log();
+      try {
+        await agent.prompt(prompt);
+        await agent.waitForIdle();
+        persist(agent);
+        console.log();
+      } finally {
+        await mcp.close();
+      }
       return;
     }
 
@@ -837,6 +994,7 @@ program
             model,
             models: runtime.models,
             toolPolicy,
+            mcp,
             onEvent: (event) => {
               if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
                 streamed += event.assistantMessageEvent.delta;
@@ -882,7 +1040,7 @@ program
         onAfterPrompt: (activeAgent) => persist(activeAgent),
         onToggleMode: (activeAgent) => sessionLock.run(() => {
           config = { ...config, mode: config.mode === "plan" ? "build" : "plan" };
-          applyConfigToAgent(activeAgent, config, runtime.models, model);
+          applyConfigToAgent(activeAgent, config, runtime.models, model, mcp);
           persist(activeAgent);
           return { mode: config.mode === "plan" ? "Plan" : "Build" };
         }),
@@ -968,6 +1126,7 @@ program
       process.off("SIGINT", exitImmediately);
       stopScheduler();
       await telegram?.stop();
+      await mcp.close();
     }
   });
 

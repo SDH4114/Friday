@@ -45,6 +45,8 @@ raya local list
 raya gateway --setup
 raya gateway --start
 raya gateway --restart
+raya mcp list
+raya skills list
 raya web               # open the full local Web application
 ```
 
@@ -78,6 +80,8 @@ Useful interactive commands:
 /theme
 /security
 /sessions
+/mcps
+/skills
 /About
 /clear
 /exit
@@ -180,9 +184,80 @@ Blocked commands are checked before Raya invokes the shell, including common wra
 
 ## Skills
 
+Raya ships with built-in `debugging`, `implementation`, `project-audit`, and `web-research` skills. The installer copies them into `~/.raya/skills/` and the first Raya startup performs the same sync as a fallback. Existing folders are never replaced, so user edits remain yours. A later Raya update only installs newly added skills that are missing.
+
 Raya automatically loads `SKILL.md` instructions from both `~/.raya/skills/<skill>/SKILL.md` and `<workspace>/.agents/skills/<skill>/SKILL.md`. Relevant skills are supplied to the agent at session start. Before applying one, the agent calls its built-in `use_skill` marker so the TUI can show `Raya is using skill …`. Skills are context instructions, never executable code by themselves.
 
+```bash
+raya skills list       # built-in, user, workspace, and package skills
+raya skills sync       # install any missing built-in skills
+```
+
 At startup Raya prefers `~/.raya/AGENTS.md`; if it is absent, she walks upward from the current directory and loads the nearest `AGENTS.md`. `SOUL.md` follows the same independent fallback algorithm.
+
+## MCP servers
+
+Raya is an MCP client for local `stdio` servers and remote Streamable HTTP servers. Enabled servers connect once when Raya starts and close cleanly when Raya exits. Their tools are exposed with collision-safe names such as `mcp_filesystem_read_file`; MCP resources and prompts are available through `mcp_list_resources`, `mcp_read_resource`, `mcp_list_prompts`, and `mcp_get_prompt`. Server instructions are included in the agent context. The same connected MCP tools are available in the terminal, Raya Web, Telegram gateway, and subagents.
+
+Add and test a local server:
+
+```bash
+raya mcp add filesystem \
+  --command npx \
+  --arg=-y \
+  --arg @modelcontextprotocol/server-filesystem \
+  --arg "$PWD"
+raya mcp test filesystem
+```
+
+Add a remote server. Environment placeholders keep the actual token out of `config.json`:
+
+```bash
+export MY_MCP_TOKEN="..."
+raya mcp add company \
+  --url https://mcp.example.com/mcp \
+  --header 'Authorization=Bearer ${MY_MCP_TOKEN}'
+raya mcp test company
+```
+
+Manage configured servers:
+
+```bash
+raya mcp list
+raya mcp disable filesystem
+raya mcp enable filesystem
+raya mcp remove filesystem
+```
+
+Servers are stored visibly under `mcpServers` in `~/.raya/config.json`:
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "enabled": true,
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/Users/me/project"],
+      "env": {},
+      "approval": "writes",
+      "timeoutMs": 30000,
+      "toolTimeoutMs": 120000
+    },
+    "company": {
+      "enabled": false,
+      "transport": "http",
+      "url": "https://mcp.example.com/mcp",
+      "headers": { "Authorization": "Bearer ${MY_MCP_TOKEN}" },
+      "approval": "writes",
+      "timeoutMs": 30000,
+      "toolTimeoutMs": 120000
+    }
+  }
+}
+```
+
+`approval` may be `always`, `writes` (default), or `never`. Plan mode only permits MCP tools that the server marks read-only. In Standard Build mode, tools not marked read-only ask for the normal Raya approval unless the server is configured with `approval: "never"`. Full access skips interactive approvals. A server that fails to connect is reported once and does not prevent Raya or the other MCP servers from starting.
 
 ## Subagents and pi packages
 
@@ -226,6 +301,8 @@ For a safer remote path, every dangerous tool action requested from Telegram—s
 - `src/tools/` — extensible tool registry.
 - `src/tui/` — streaming terminal UI using `pi-tui` utilities.
 - `src/telegram/service.ts` — same-process Telegram long polling and approval buttons.
+- `src/mcp/client.ts` — MCP transports, capability discovery, tool adapters, resources, prompts, and lifecycle.
+- `src/skills/` and `builtin-skills/` — skill discovery and first-run built-in installation.
 - `src/session/` and `src/memory/` — JSON session state, Markdown transcripts, and memory-skill hook.
 - `src/cli/index.ts` — command entry point and session lifecycle.
 
@@ -235,7 +312,7 @@ For a safer remote path, every dangerous tool action requested from Telegram—s
 - Shell and filesystem access are **not sandboxed**; run Raya only in a trusted workspace.
 - Web browsing is text search/fetch only: no browser clicking or form automation.
 - Telegram runs in the local CLI process, not on a server.
-- A complete third-party plugin system is out of scope; the tool registry and memory hook are the extension points.
+- Native Pi CLI extensions still require a Raya adapter; MCP and instruction skills are supported directly.
 
 ## v2 TODO
 

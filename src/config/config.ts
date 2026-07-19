@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { z } from "zod";
 import { ensureRayaHome, RAYA_CONFIG_PATH } from "./paths.js";
 import { writePrivateFileAtomic } from "../storage/atomic-file.js";
+import { ensureBuiltinSkills } from "../skills/bootstrap.js";
 
 const LocalModelSchema = z.object({
   provider: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/),
@@ -11,6 +12,29 @@ const LocalModelSchema = z.object({
   contextWindow: z.number().int().positive().default(32_768),
   maxTokens: z.number().int().positive().default(8_192)
 });
+
+const McpCommonSchema = z.object({
+  enabled: z.boolean().default(true),
+  approval: z.enum(["always", "writes", "never"]).default("writes"),
+  timeoutMs: z.number().int().min(1_000).max(300_000).default(30_000),
+  toolTimeoutMs: z.number().int().min(1_000).max(600_000).default(120_000)
+});
+
+const McpStdioServerSchema = McpCommonSchema.extend({
+  transport: z.literal("stdio"),
+  command: z.string().min(1),
+  args: z.array(z.string()).default([]),
+  cwd: z.string().min(1).optional(),
+  env: z.record(z.string(), z.string()).default({})
+});
+
+const McpHttpServerSchema = McpCommonSchema.extend({
+  transport: z.literal("http"),
+  url: z.string().url(),
+  headers: z.record(z.string(), z.string()).default({})
+});
+
+const McpServerSchema = z.discriminatedUnion("transport", [McpStdioServerSchema, McpHttpServerSchema]);
 
 const ConfigSchema = z.object({
   provider: z.string().default("openai-codex"),
@@ -25,12 +49,14 @@ const ConfigSchema = z.object({
   neovim_mode: z.boolean().default(false),
   localModels: z.array(LocalModelSchema).default([]),
   piPackages: z.array(z.string().min(1)).default([]),
+  mcpServers: z.record(z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/), McpServerSchema).default({}),
   shellTimeoutMs: z.number().int().positive().default(120_000),
   webTimeoutMs: z.number().int().positive().default(15_000),
   webMaxChars: z.number().int().positive().default(12_000)
 });
 
 export type RayaConfig = z.infer<typeof ConfigSchema>;
+export type McpServerConfig = z.infer<typeof McpServerSchema>;
 
 const defaultConfig: RayaConfig = ConfigSchema.parse({});
 
@@ -45,6 +71,7 @@ export function normalizeConfig(value: unknown): RayaConfig {
 
 export function loadConfig(): RayaConfig {
   ensureRayaHome();
+  ensureBuiltinSkills();
 
   if (!existsSync(RAYA_CONFIG_PATH)) {
     return ConfigSchema.parse(defaultConfig);

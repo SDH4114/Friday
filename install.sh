@@ -64,6 +64,7 @@ cd "$tmpdir/raya"
 npm ci
 npm run build
 npm install -g .
+raya skills sync
 
 echo
 echo "Raya installed."
