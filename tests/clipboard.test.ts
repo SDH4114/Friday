@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { displayPromptValue, isShiftEnterKey, isShiftEnterSequence, promptViewport, styleImageMarkers } from "../src/tui/app.js";
+import { displayPromptValue, isShiftEnterKey, isShiftEnterSequence, multilinePromptViewport, promptViewport, styleImageMarkers } from "../src/tui/app.js";
 import { insertClipboardImage, insertClipboardText, normalizePastedText, parseMacClipboardOutput, removeImageMarker } from "../src/tui/clipboard.js";
 
 test("pasted text is normalized and inserted as one operation", () => {
@@ -9,7 +9,8 @@ test("pasted text is normalized and inserted as one operation", () => {
     value: "before one\ntwoafter",
     cursor: 14
   });
-  assert.match(displayPromptValue("one\ntwo"), /one.*↵.*two/);
+  assert.equal(displayPromptValue("one\ntwo"), "one\ntwo");
+  assert.doesNotMatch(displayPromptValue("one\ntwo"), /↵/u);
   assert.doesNotMatch(displayPromptValue("safe\x1b[2J"), /\x1b\[2J/);
   assert.deepEqual(promptViewport("a very long pasted prompt", 18, 12), {
     text: "… pasted pr…",
@@ -46,6 +47,11 @@ test("Shift+Enter is recognized as a newline instead of submit", () => {
   assert.equal(isShiftEnterSequence("\x1b\r"), true);
   assert.equal(isShiftEnterSequence("\x1b[13;2u"), true);
   assert.equal(isShiftEnterSequence("\x1b[27;2;13~"), true);
+  assert.deepEqual(multilinePromptViewport("first\nsecond", 12, 20), {
+    rows: ["first", "second"],
+    cursorRow: 1,
+    cursorColumn: 6
+  });
 });
 
 test("macOS clipboard output becomes real multimodal image content", () => {

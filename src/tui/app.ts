@@ -357,10 +357,9 @@ function wordEnd(value: string, cursor: number): number {
 type InputDraft = { value: string; cursor: number; neovimMode?: NeovimState["mode"]; images?: ImageContent[] };
 type TuiLineResult = { line: string; images: ImageContent[] };
 
-/** Keep pasted line breaks visible without letting them corrupt the terminal frame. */
+/** Sanitize prompt text without replacing real line breaks with visible symbols. */
 export function displayPromptValue(value: string): string {
   return value
-    .replace(/\n/gu, "↵ ")
     .replace(/\t/gu, "  ")
     .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/gu, "�");
 }
@@ -395,6 +394,33 @@ export function promptViewport(value: string, cursor: number, width: number): { 
   const visibleBefore = takeDisplayEnd(before, safeWidth - afterReservation);
   const visibleAfter = takeDisplayStart(after, safeWidth - visibleWidth(visibleBefore));
   return { text: `${visibleBefore}${visibleAfter}`, cursorColumn: visibleWidth(visibleBefore) };
+}
+
+const MAX_VISIBLE_INPUT_LINES = 6;
+
+export function multilinePromptViewport(
+  value: string,
+  cursor: number,
+  width: number,
+  maxLines = MAX_VISIBLE_INPUT_LINES
+): { rows: string[]; cursorRow: number; cursorColumn: number } {
+  const lines = value.split("\n");
+  const beforeCursor = value.slice(0, cursor).split("\n");
+  const currentLine = beforeCursor.length - 1;
+  const lineCursor = beforeCursor.at(-1)?.length ?? 0;
+  const visibleLineCount = Math.max(Math.floor(maxLines), 1);
+  const start = Math.max(0, Math.min(currentLine - Math.floor(visibleLineCount / 2), lines.length - visibleLineCount));
+  const end = Math.min(start + visibleLineCount, lines.length);
+  const topIndicator = start > 0 ? [`… ${start} lines above`] : [];
+  const bottomIndicator = end < lines.length ? [`… ${lines.length - end} lines below`] : [];
+  const visibleLines = lines.slice(start, end).map((line, index) =>
+    promptViewport(line, start + index === currentLine ? lineCursor : line.length, width).text);
+  const currentViewport = promptViewport(lines[currentLine] ?? "", lineCursor, width);
+  return {
+    rows: [...topIndicator, ...visibleLines, ...bottomIndicator],
+    cursorRow: topIndicator.length + currentLine - start,
+    cursorColumn: currentViewport.cursorColumn
+  };
 }
 
 export function styleImageMarkers(value: string): string {
@@ -508,6 +534,7 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
   let suppressKeypressesForDataChunk = false;
   let clipboardPastePending = false;
   let workspaceMentionCache: WorkspaceMention[] | undefined;
+  let renderedCursorRow = 0;
   let onData: (data: Buffer | string) => void;
   const hotkeys = options?.hotkeys ?? info().hotkeys ?? DEFAULT_HOTKEYS;
   const workspaceSuggestions = (): WorkspaceMention[] => {
@@ -525,17 +552,20 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
     if (suggestions[selected]?.selectable === false) selected = selectableIndex(suggestions, selected - 1, 1);
     // Paint over the previous frame instead of clearing the whole menu first.
     // Clearing first creates a visible blank frame on every arrow-key press.
-    output.write("\r");
+    output.write(`\r${renderedCursorRow > 0 ? `\x1b[${renderedCursorRow}A` : ""}`);
     const inputWidth = Math.max(terminalWidth - visibleWidth(label()), 1);
-    const viewport = promptViewport(value, cursor, inputWidth);
-    let displayValue = viewport.text;
-    const entireValueFits = visibleWidth(displayPromptValue(value)) <= inputWidth;
+    const multilineViewport = multilinePromptViewport(value, cursor, inputWidth);
+    let displayRows = multilineViewport.rows;
+    const entireValueFits = !value.includes("\n") && visibleWidth(displayPromptValue(value)) <= inputWidth;
     if (entireValueFits && neovimState?.mode === "VISUAL" && neovimState.selectionStart !== undefined && value.length) {
       const start = Math.min(neovimState.selectionStart, cursor);
       const end = Math.max(neovimState.selectionStart, cursor) + 1;
-      displayValue = `${displayPromptValue(value.slice(0, start))}\x1b[7m${displayPromptValue(value.slice(start, end))}${theme.reset}${displayPromptValue(value.slice(end))}`;
+      displayRows = [`${displayPromptValue(value.slice(0, start))}\x1b[7m${displayPromptValue(value.slice(start, end))}${theme.reset}${displayPromptValue(value.slice(end))}`];
     }
-    output.write(color(label(), theme.blue) + color(styleImageMarkers(displayValue), theme.white) + "\x1b[K\n");
+    for (const [index, row] of displayRows.entries()) {
+      const prefix = index === 0 ? color(label(), theme.blue) : " ".repeat(visibleWidth(label()));
+      output.write(prefix + color(styleImageMarkers(row), theme.white) + "\x1b[K\n");
+    }
     const windowStart = Math.max(0, Math.min(selected - Math.floor(MAX_VISIBLE_SUGGESTIONS / 2), suggestions.length - MAX_VISIBLE_SUGGESTIONS));
     const visibleSuggestions = suggestions.slice(windowStart, windowStart + MAX_VISIBLE_SUGGESTIONS);
     let suggestionLines = 0;
@@ -567,8 +597,10 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
     const footer = `Context ${used}/${limit} · ${modelStatusLabel(current)} · ${current.directory} · Raya v${current.version}`;
     output.write(color(fitCell(footer, terminalWidth).trimEnd(), theme.gray) + "\x1b[K\n\x1b[J");
     visible = suggestionLines;
-    const cursorColumn = visibleWidth(label()) + viewport.cursorColumn;
-    output.write(`\x1b[${visible + 2}A\r\x1b[${cursorColumn}C`);
+    const rowsUp = displayRows.length + visible + 1 - multilineViewport.cursorRow;
+    const cursorColumn = visibleWidth(label()) + multilineViewport.cursorColumn;
+    output.write(`\x1b[${rowsUp}A\r\x1b[${cursorColumn}C`);
+    renderedCursorRow = multilineViewport.cursorRow;
   };
 
   const finish = (resolve: (result: TuiLineResult) => void, line: string, echo = true): void => {
@@ -580,10 +612,13 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
     input.pause();
     activeNotificationHandler = undefined;
     output.write("\x1b[?2004l");
-    output.write("\r\x1b[J");
+    output.write(`\r${renderedCursorRow > 0 ? `\x1b[${renderedCursorRow}A` : ""}\x1b[J`);
     if (echo) {
-      const viewport = promptViewport(line, line.length, Math.max((output.columns ?? 121) - 1 - visibleWidth(label()), 1));
-      output.write(color(label(), theme.blue) + color(styleImageMarkers(viewport.text), theme.white) + "\n");
+      const viewport = multilinePromptViewport(line, line.length, Math.max((output.columns ?? 121) - 1 - visibleWidth(label()), 1));
+      for (const [index, row] of viewport.rows.entries()) {
+        const prefix = index === 0 ? color(label(), theme.blue) : " ".repeat(visibleWidth(label()));
+        output.write(prefix + color(styleImageMarkers(row), theme.white) + "\n");
+      }
     }
     resolve({ line, images: [...images] });
   };
@@ -898,7 +933,8 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
     input.resume();
     output.write("\x1b[?2004h");
     activeNotificationHandler = (message) => {
-      output.write("\r\x1b[J");
+      output.write(`\r${renderedCursorRow > 0 ? `\x1b[${renderedCursorRow}A` : ""}\x1b[J`);
+      renderedCursorRow = 0;
       output.write(`${color(message, theme.yellow)}\n`);
       render();
     };
