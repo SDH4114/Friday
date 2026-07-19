@@ -18,7 +18,8 @@
 6. Preserve old config and package behavior unless a migration is deliberate and tested.
 7. Avoid retry loops and repeated status output; aggregate recurring failures and retry with bounded backoff where appropriate.
 8. For TUI input, test raw bytes and parsed keypress events; terminal Escape and control chords can arrive through both paths.
-9. For MCP, test config normalization, connection failure cleanup, tool safety, stdio end to end, and every supported HTTP-family transport when the environment permits sockets.
+9. For repaintable TUI frames, count physical terminal rows after soft wrapping and explicit newlines. Never clear a fixed number of logical lines when content may exceed terminal width.
+10. For MCP, test config normalization, connection failure cleanup, tool safety, stdio end to end, and every supported HTTP-family transport when the environment permits sockets.
 
 ## Verify
 

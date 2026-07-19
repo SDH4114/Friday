@@ -6,6 +6,7 @@ import { stdin as input, stdout as output } from "node:process";
 import { color, theme } from "./theme.js";
 import { createNeovimState, ensureNeovimConfig, handleNeovimKey, type NeovimConfig, type NeovimState } from "./neovim.js";
 import { DEFAULT_HOTKEYS, formatHotkey, matchesHotkey, type TuiHotkeys } from "./hotkeys.js";
+import { RAYA_SLASH_COMMANDS } from "../agent/capabilities.js";
 
 let activeNotificationHandler: ((message: string) => void) | undefined;
 let activeRawInputHandler: ((data: Buffer | string) => void) | undefined;
@@ -15,19 +16,34 @@ export function notifyTui(message: string): void {
   else console.log(color(message, theme.yellow));
 }
 
+/** Count physical terminal rows, including soft wraps and explicit newlines. */
+export function terminalPhysicalRows(lines: readonly string[], columns: number): number {
+  const width = Math.max(1, columns);
+  return lines.reduce((total, line) => total + line.split("\n").reduce(
+    (rows, part) => rows + Math.max(1, Math.ceil(visibleWidth(part) / width)),
+    0
+  ), 0);
+}
+
 /** Ask the local terminal user before an agent performs a consequential action. */
 export async function requestTerminalApproval(action: string, details: string): Promise<void> {
   if (!input.isTTY || !output.isTTY || !input.setRawMode) {
     throw new Error("Build action requires an interactive terminal approval.");
   }
   let selected = 0;
-  let rendered = false;
+  let renderedRows = 0;
+  const clear = (): void => {
+    output.write(renderedRows > 0 ? `\x1b[${renderedRows}A\r\x1b[J` : "\r\x1b[J");
+  };
   const draw = (): void => {
-    output.write(rendered ? "\x1b[3A\r\x1b[J" : "\r\x1b[J");
-    output.write(`${color("Approval required", theme.yellow)}\n`);
-    output.write(`${color(`${action}: ${details}`, theme.white)}\n`);
+    const heading = "Approval required";
+    const actionLine = `${action}: ${details}`;
+    const choiceLine = `${selected === 0 ? "› Accept" : "  Accept"}    ${selected === 1 ? "› Refuse" : "  Refuse"}`;
+    clear();
+    output.write(`${color(heading, theme.yellow)}\n`);
+    output.write(`${color(actionLine, theme.white)}\n`);
     output.write(`${selected === 0 ? color("› Accept", theme.green) : color("  Accept", theme.gray)}    ${selected === 1 ? color("› Refuse", theme.red) : color("  Refuse", theme.gray)}\n`);
-    rendered = true;
+    renderedRows = terminalPhysicalRows([heading, actionLine, choiceLine], output.columns ?? 80);
   };
 
   return new Promise<void>((resolve, reject) => {
@@ -35,12 +51,12 @@ export async function requestTerminalApproval(action: string, details: string): 
       input.setRawMode(false);
       input.off("keypress", onKeypress);
       input.pause();
-      output.write("\x1b[3A\r\x1b[J");
+      clear();
       approved ? resolve() : reject(new Error("Action refused by user."));
     };
     const onKeypress = (_text: string, key: { name?: string; ctrl?: boolean }): void => {
-      if (key.name === "left" || key.name === "up") { selected = 0; draw(); return; }
-      if (key.name === "right" || key.name === "down") { selected = 1; draw(); return; }
+      if (key.name === "left" || key.name === "up") { if (selected !== 0) { selected = 0; draw(); } return; }
+      if (key.name === "right" || key.name === "down") { if (selected !== 1) { selected = 1; draw(); } return; }
       if (key.name === "return" || key.name === "enter") { finish(selected === 0); return; }
       if (key.name === "escape" || (key.ctrl && key.name === "c")) { finish(false); }
     };
@@ -96,21 +112,7 @@ export function restoredTuiMode(value: string | undefined, current: "Plan" | "Bu
   return value === "Plan" || value === "Build" ? value : current;
 }
 
-const slashCommands: CommandSuggestion[] = [
-  { value: "/help", description: "Show available commands" },
-  { value: "/providers", description: "Connect, update, or choose providers" },
-  { value: "/models", description: "Browse and choose models from all providers" },
-  { value: "/thinking", description: "Set reasoning level" },
-  { value: "/theme", description: "Choose and immediately apply the global theme" },
-  { value: "/security", description: "Choose security mode" },
-  { value: "/sessions", description: "Create/open sessions · dd deletes selected" },
-  { value: "/mcps", description: "Show configured and enabled MCP servers" },
-  { value: "/skills", description: "Show available skills" },
-  { value: "/about", description: "What Raya is and what she can do" },
-  { value: "/status", description: "Show current status" },
-  { value: "/clear", description: "Clear this conversation" },
-  { value: "/exit", description: "Exit Raya" }
-];
+const slashCommands: CommandSuggestion[] = RAYA_SLASH_COMMANDS.map(([value, description]) => ({ value, description }));
 
 const largeRayaLogo = [
   "██████╗  █████╗ ██╗   ██╗ █████╗ ",

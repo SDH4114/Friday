@@ -13,7 +13,7 @@ Raya is not one model. She is the orchestration layer around selectable model pr
 3. `src/providers/` authenticates providers and selects the model runtime.
 4. `src/mcp/` connects enabled MCP servers and exposes their tools, resources, and prompts.
 5. `src/agent/create-agent.ts` assembles the agent, system prompt, built-in tools, and MCP tools.
-6. `src/agent/system-prompt.ts` provides Raya's stable identity, operating rules, workspace instructions, memory, and the skill catalog.
+6. `src/agent/capabilities.ts` supplies the shared capability map used by the system prompt, `/about`, and slash-command help; `src/agent/system-prompt.ts` adds stable operating rules, workspace instructions, memory, and the skill catalog.
 7. `src/skills/loader.ts` discovers skill metadata; `use_skill` loads complete instructions only when needed.
 8. Agent events stream to `src/tui/`, `src/web/`, or Telegram and sessions are persisted for later continuation.
 
@@ -30,6 +30,7 @@ Raya is not one model. She is the orchestration layer around selectable model pr
 ## Source Map
 
 - `src/agent/`: agent assembly, identity, workspace instructions, compaction, and context.
+- `src/agent/capabilities.ts`: single catalog of built-in CLI commands, slash commands, tools, interfaces, persistence, safety boundaries, and installed personal commands.
 - `src/cli/`: commands, setup, config UX, and interface startup.
 - `src/commands/`: schema-validated user command persistence and direct process execution without shell interpolation.
 - `src/config/`: schema, paths, secrets, migration, and durable settings.

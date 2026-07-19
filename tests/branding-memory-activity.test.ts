@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { advanceSessionDeleteKey, attachSkillToPrompt, commandSuggestions, fitSuggestionLine, modelStatusLabel, renderLargeAppleWord, renderStartupDashboard, sessionDeleteDescription } from "../src/tui/app.js";
+import { advanceSessionDeleteKey, attachSkillToPrompt, commandSuggestions, fitSuggestionLine, modelStatusLabel, renderLargeAppleWord, renderStartupDashboard, sessionDeleteDescription, terminalPhysicalRows } from "../src/tui/app.js";
 import { formatToolActivity } from "../src/tui/render-events.js";
 import { theme } from "../src/tui/theme.js";
 import { renderMarkdown } from "../src/tui/markdown.js";
@@ -134,4 +134,10 @@ test("session deletion requires two consecutive d presses on the same selection"
     sessionDeleteDescription("/sessions delete abc123", "/sessions delete abc123", "session detail"),
     "Press d again to delete · confirmation follows"
   );
+});
+
+test("approval frames count wrapped command rows before repainting", () => {
+  assert.equal(terminalPhysicalRows(["Approval required", "run shell command: short", "› Accept    Refuse"], 80), 3);
+  assert.equal(terminalPhysicalRows(["Approval required", `run shell command: ${"x".repeat(170)}`, "Accept    › Refuse"], 80), 5);
+  assert.equal(terminalPhysicalRows(["Approval required", "run MCP tool: server/tool\n{\n  \"value\": true\n}", "› Accept    Refuse"], 80), 6);
 });

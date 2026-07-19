@@ -14,8 +14,9 @@ Raya A.P.P.L.E. is an open-source personal AI operating and coding assistant: Ad
 3. Read [configuration.md](references/configuration.md) for config fields, paths, hotkeys, MCP formats, migrations, and persistent state.
 4. Read [self-maintenance.md](references/self-maintenance.md) before changing Raya internals.
 5. Inspect the current source because these references describe intended boundaries and may lag an unbuilt checkout.
-6. Distinguish source, `dist`, and an installed `raya` binary before diagnosing inconsistent behavior.
-7. Treat configuration, secrets, persistent state, external tools, model output, MCP content, and user files as trust boundaries.
+6. Treat `src/agent/capabilities.ts` as the shared runtime catalog for the system prompt, `/about`, `/help`, built-in CLI commands, slash commands, agent tools, persistence, and honest limits. Compare it with the actual Commander and tool registrations when changing capabilities.
+7. Distinguish source, `dist`, and an installed `raya` binary before diagnosing inconsistent behavior.
+8. Treat configuration, secrets, persistent state, external tools, model output, MCP content, and user files as trust boundaries.
 
 ## Reason About Raya Correctly
 

@@ -1,5 +1,7 @@
 # Raya Capabilities and Limits
 
+`src/agent/capabilities.ts` is the executable shared catalog injected into Raya's system prompt and rendered by `/about` and `/help`. It covers every built-in top-level command (`commands`, `local`, `web`, provider auth, Telegram gateway, plugins, MCP, skills, status/config, providers/models, search shortcuts, Git, and application opening), every slash command, every core tool, connected MCP resource/prompt adapters, persistent stores, and honest limits. Personal commands from `commands.json` are added to the prompt dynamically. Verify new functionality there as well as at its real registration point so Raya never describes stale or imaginary capabilities.
+
 ## Interfaces
 
 - Interactive TUI: streaming chat, Plan/Build switching, configurable core hotkeys, slash menus, prompt history, direct terminal lines, themes, sessions, and optional Neovim editing. The footer shows the active model and reasoning level. `/skills` attaches a selected skill to the current message as `@skill:<name>`, and `/about` is lowercase.

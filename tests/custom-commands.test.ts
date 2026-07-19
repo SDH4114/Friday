@@ -15,6 +15,17 @@ function run(home: string, args: string[]): string {
   });
 }
 
+function capabilityContext(home: string): string {
+  return execFileSync(process.execPath, [
+    "--import", "tsx", "--input-type=module", "--eval",
+    "import { rayaCapabilityContext } from './src/agent/capabilities.ts'; console.log(rayaCapabilityContext())"
+  ], {
+    cwd: process.cwd(),
+    env: { ...process.env, RAYA_HOME: home },
+    encoding: "utf8"
+  });
+}
+
 test("users can create, discover, run, inspect, and remove direct commands", () => {
   const home = mkdtempSync(join(tmpdir(), "raya-custom-commands-"));
   const created = run(home, [
@@ -28,6 +39,12 @@ test("users can create, discover, run, inspect, and remove direct commands", () 
   assert.match(run(home, ["commands", "show", "greet"]), /description: Print supplied arguments/);
   assert.equal(run(home, ["greet", "one", "--two"]).trim(), "one|--two");
   assert.match(run(home, ["--help"]), /greet \[args\.\.\.\]\s+Print supplied arguments/);
+  const capabilities = capabilityContext(home);
+  assert.match(capabilities, /raya commands add\|list\|show\|remove/);
+  assert.match(capabilities, /raya greet \[args\.\.\.\]: Print supplied arguments/);
+  for (const capability of ["schedule", "subagent", "create_skill", "mcp_list_resources", "Telegram gateway", "commands.json"]) {
+    assert.match(capabilities, new RegExp(capability));
+  }
 
   const stored = JSON.parse(readFileSync(join(home, "commands.json"), "utf8")) as unknown[];
   assert.equal(stored.length, 1);

@@ -17,6 +17,7 @@ import {
   logoutProvider
 } from "../providers/runtime.js";
 import { createRayaAgent, createRayaTools } from "../agent/create-agent.js";
+import { RAYA_SLASH_COMMANDS, rayaAboutMarkdown } from "../agent/capabilities.js";
 import { commandMatchesAutoApprovePrefix } from "../tools/shell.js";
 import { formatToolActivity, renderAgentEvent } from "../tui/render-events.js";
 import { notifyTui, requestTerminalApproval, runInteractiveTui } from "../tui/app.js";
@@ -841,21 +842,7 @@ program
     };
 
     const printHelp = (): void => {
-      console.log([
-        "/help                         show commands",
-        "/providers                    connect, update, or choose a provider",
-        "/models                       browse and choose models from all providers",
-        "/thinking                      choose reasoning level",
-        "/theme                         choose and apply the global theme",
-        "/security                      choose Standard or Full access",
-        "/sessions                     create, open, or delete a session",
-        "/mcps                         show configured and enabled MCP servers",
-        "/skills                       choose a skill to attach to the message",
-        "/about                        what Raya is and what she can do",
-        "/status                       show current config",
-        "/clear                        clear current session messages",
-        "/exit                         quit"
-      ].join("\n"));
+      console.log(RAYA_SLASH_COMMANDS.map(([command, description]) => `${command.padEnd(30)} ${description}`).join("\n"));
     };
 
     const handleCommand = async (activeAgent: Agent, command: string): Promise<Agent | void> => {
@@ -868,26 +855,7 @@ program
       }
 
       if (name === "about") {
-        console.log(renderMarkdown([
-          "# Raya A.P.P.L.E.",
-          "",
-          "**Adaptive Personal Processing and Logic Engine**",
-          "",
-          "Raya is a personal AI operating system and coding agent that works with you directly from the terminal. She is designed to understand a goal, inspect the real environment, plan the work, carry it out, and preserve useful context for later.",
-          "",
-          "Raya can:",
-          "- read, create, and edit project files;",
-          "- run terminal commands and work with applications;",
-          "- search the web when current information is needed;",
-          "- follow personal ~/.raya instructions or the nearest workspace AGENTS.md and SOUL.md;",
-          "- remember durable preferences and project knowledge in USER.md and MEMORY.md;",
-          "- search and read previous Raya sessions;",
-          "- use skills, subagents, schedules, and Telegram integration;",
-          "- connect to local and remote MCP servers, tools, resources, and prompts;",
-          "- work safely in Plan mode or make changes in Build mode.",
-          "",
-          "The goal of Raya is simple: turn a conversation into completed, verifiable work while becoming more useful to you over time."
-        ].join("\n")));
+        console.log(renderMarkdown(rayaAboutMarkdown()));
         return;
       }
 
@@ -1033,6 +1001,7 @@ program
         const enabledMcp = Object.entries(config.mcpServers).filter(([, server]) => server.enabled).map(([serverName]) => serverName);
         console.log(`MCP servers   : ${enabledMcp.length ? enabledMcp.join(", ") : "None"}`);
         console.log(`Skills        : ${listAvailableSkills().length}`);
+        console.log(`Commands      : ${listCustomCommands().length} (${RAYA_COMMANDS_PATH})`);
         console.log(`Session   : ${session.name}`);
         console.log(`Config    : ${RAYA_CONFIG_PATH}`);
         console.log("Credentials: stored securely");

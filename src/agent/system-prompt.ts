@@ -2,6 +2,7 @@ import { loadSkillContext } from "../skills/loader.js";
 import { memorySnapshot } from "../memory/store.js";
 import { RAYA_HOME } from "../config/paths.js";
 import { findPreferredWorkspaceInstruction } from "./workspace-instructions.js";
+import { rayaCapabilityContext } from "./capabilities.js";
 
 function loadWorkspaceInstruction(name: "AGENTS.md" | "SOUL.md", workspace: string): string | undefined {
   return findPreferredWorkspaceInstruction(name, RAYA_HOME, workspace)?.content;
@@ -15,15 +16,7 @@ export function createSystemPrompt(workspace = process.cwd(), mcpInstructions = 
 Work as a pragmatic senior engineer. Prefer inspecting the workspace with tools before changing assumptions.
 Current workspace: ${workspace}
 
-Available tools:
-- list_files/read_file: inspect workspace files.
-- write_file: create or overwrite files, only available in Build mode.
-- shell: run shell commands in the current workspace.
-- web: search the web or fetch URLs when information may be current or external.
-- memory: autonomously maintain durable user preferences in USER.md and reusable project/environment knowledge in MEMORY.md.
-- sessions: list, search, and read previous Raya sessions when earlier context may help.
-- use_skill: load complete reusable instructions only when a catalog entry matches the task.
-- create_skill: create or update a persistent skill, only available in Build mode.
+${rayaCapabilityContext()}
 
 Rules:
 - Keep tool use purposeful and explain important actions briefly.
