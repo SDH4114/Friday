@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { advanceSessionDeleteKey, renderLargeAppleWord, renderStartupDashboard, sessionDeleteDescription } from "../src/tui/app.js";
+import { advanceSessionDeleteKey, renderCenteredStartupDashboard, renderLargeAppleWord, renderStartupDashboard, sessionDeleteDescription } from "../src/tui/app.js";
 import { formatToolActivity } from "../src/tui/render-events.js";
 import { theme } from "../src/tui/theme.js";
 import { renderMarkdown } from "../src/tui/markdown.js";
@@ -41,6 +41,12 @@ test("startup dashboard is Raya-specific, responsive, and geometrically aligned"
   const narrow = renderStartupDashboard(info, 72);
   assert.ok(narrow.every((line) => visibleWidth(line) === 72));
   assert.doesNotMatch(narrow.join("\n"), /┴/);
+
+  const centered = renderCenteredStartupDashboard(info, 160);
+  assert.ok(centered.every((line) => line.startsWith(" ".repeat(20))));
+  const tiny = renderCenteredStartupDashboard(info, 30);
+  assert.ok(tiny.every((line) => visibleWidth(line) <= 30));
+  assert.match(tiny.join("\n"), /RAYA/);
 });
 
 test("all semantic interface colors resolve to the blue palette", () => {

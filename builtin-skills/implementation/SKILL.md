@@ -1,3 +1,8 @@
+---
+name: implementation
+description: Implement complete product features and code changes. Use when the user asks to add, change, integrate, or finish working behavior.
+---
+
 # Implementation
 
 Use this skill for feature work and code changes.

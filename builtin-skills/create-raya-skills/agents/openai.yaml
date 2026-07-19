@@ -1,0 +1,4 @@
+interface:
+  display_name: "Create Raya Skills"
+  short_description: "Design and maintain reusable Raya skills"
+  default_prompt: "Use $create-raya-skills to create a reusable Raya skill for this workflow."

@@ -11,6 +11,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { z } from "zod";
 import { normalizeConfig } from "../src/config/config.js";
 import { expandMcpValue, formatMcpStatusLines, McpRuntime } from "../src/mcp/client.js";
+import { createDefaultTools } from "../src/tools/index.js";
 
 test("MCP config is normalized with visible enabled and safety settings", () => {
   const config = normalizeConfig({
@@ -24,6 +25,14 @@ test("MCP config is normalized with visible enabled and safety settings", () => 
   assert.equal(config.mcpServers.remote?.enabled, false);
   assert.equal(config.mcpServers.remote?.transport, "http");
   assert.throws(() => normalizeConfig({ mcpServers: { "bad name": { transport: "stdio", command: "node" } } }));
+});
+
+test("skill authoring is exposed only in Build mode", () => {
+  const plan = createDefaultTools(normalizeConfig({ mode: "plan" })).map((tool) => tool.name);
+  const build = createDefaultTools(normalizeConfig({ mode: "build" })).map((tool) => tool.name);
+  assert.equal(plan.includes("create_skill"), false);
+  assert.equal(build.includes("create_skill"), true);
+  assert.equal(plan.includes("use_skill"), true);
 });
 
 test("MCP environment placeholders resolve without writing secrets to config", () => {
@@ -147,7 +156,7 @@ test("first Raya config load installs built-in skills without replacing user fil
       encoding: "utf8"
     });
     const names = JSON.parse(output) as string[];
-    assert.deepEqual(names, ["debugging", "implementation", "project-audit", "web-research"]);
+    assert.deepEqual(names, ["create-raya-skills", "debugging", "implementation", "project-audit", "raya-self-knowledge", "web-research"]);
     assert.equal(existsSync(join(home, "skills", "debugging", "SKILL.md")), true);
     assert.match(readFileSync(join(home, "skills", "implementation", "SKILL.md"), "utf8"), /Finish working behavior/);
     const customized = join(home, "skills", "debugging", "SKILL.md");
@@ -156,6 +165,55 @@ test("first Raya config load installs built-in skills without replacing user fil
       cwd: process.cwd(), env: { ...process.env, RAYA_HOME: home }, encoding: "utf8"
     });
     assert.equal(readFileSync(customized, "utf8"), "# My customized debugging skill\n");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("skill catalog uses metadata and loads full instructions progressively", () => {
+  const home = mkdtempSync(join(tmpdir(), "raya-skill-catalog-"));
+  try {
+    const script = [
+      'import { loadConfig } from "./src/config/config.ts";',
+      'import { loadSkillContext } from "./src/skills/loader.ts";',
+      'loadConfig();',
+      'console.log(loadSkillContext());'
+    ].join("");
+    const output = execFileSync(process.execPath, ["--import", "tsx", "-e", script], {
+      cwd: process.cwd(), env: { ...process.env, RAYA_HOME: home }, encoding: "utf8"
+    });
+    assert.match(output, /raya-self-knowledge: Understand Raya's identity/);
+    assert.match(output, /create-raya-skills: Create or update reusable Raya skills/);
+    assert.doesNotMatch(output, /# Raya Self Knowledge/);
+    assert.doesNotMatch(output, /## Repair or Improve Raya/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("Build mode can create a persistent skill and load its references", () => {
+  const home = mkdtempSync(join(tmpdir(), "raya-create-skill-"));
+  try {
+    const script = [
+      'import { createSkillAuthoringTool } from "./src/tools/skill-authoring.ts";',
+      'import { createUseSkillTool } from "./src/tools/skill.ts";',
+      'const created = await createSkillAuthoringTool().execute("create", {',
+      'name: "release-check", description: "Verify a release. Use before publishing a Raya package.",',
+      'instructions: "# Release Check\\n\\nRun checks and report evidence.",',
+      'references: [{ filename: "commands.md", content: "# Commands\\n\\nRun the project tests." }] });',
+      'const skill = await createUseSkillTool().execute("use", { name: "release-check" });',
+      'const reference = await createUseSkillTool().execute("ref", { name: "release-check", reference: "commands.md" });',
+      'console.log(JSON.stringify({ created: created.details, skill: skill.content[0], reference: reference.content[0] }));'
+    ].join("");
+    const output = execFileSync(process.execPath, ["--import", "tsx", "-e", script], {
+      cwd: process.cwd(), env: { ...process.env, RAYA_HOME: home }, encoding: "utf8"
+    });
+    const result = JSON.parse(output) as { created: { updated: boolean }; skill: { text: string }; reference: { text: string } };
+    assert.equal(result.created.updated, false);
+    assert.match(result.skill.text, /name: release-check/);
+    assert.match(result.skill.text, /references\/commands\.md/);
+    assert.match(result.reference.text, /Run the project tests/);
+    assert.equal(existsSync(join(home, "skills", "release-check", "SKILL.md")), true);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

@@ -1,3 +1,8 @@
+---
+name: project-audit
+description: Inspect, understand, review, or harden a repository. Use for architecture mapping, code audits, security reviews, and broad reliability checks.
+---
+
 # Project audit
 
 Use this skill when the user asks to inspect, review, harden, or understand a repository.

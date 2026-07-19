@@ -1,3 +1,8 @@
+---
+name: web-research
+description: Research current external information with reliable source links. Use when facts may have changed or official documentation is required.
+---
+
 # Web research
 
 Use this skill when current external information, official documentation, or source links are needed.

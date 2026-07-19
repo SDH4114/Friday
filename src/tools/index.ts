@@ -7,12 +7,13 @@ import { createWebTool } from "./web.js";
 import { createMemoryTool } from "./memory.js";
 import { createScheduleTool } from "./schedule.js";
 import { createUseSkillTool } from "./skill.js";
+import { createSkillAuthoringTool } from "./skill-authoring.js";
 import { createSessionsTool } from "./sessions.js";
 
 export function createDefaultTools(config: RayaConfig, policy: ToolExecutionPolicy = {}, workspace = process.cwd()): RayaTool[] {
   const tools: RayaTool[] = [createListFilesTool(workspace), createReadFileTool(workspace), createShellTool(config, policy, workspace), createWebTool(config), createMemoryTool(), createSessionsTool(), createScheduleTool(), createUseSkillTool()];
   if (config.mode === "build") {
-    tools.push(createWriteFileTool(policy, workspace), createAppControlTool(policy));
+    tools.push(createWriteFileTool(policy, workspace), createAppControlTool(policy), createSkillAuthoringTool(policy));
   }
   return tools;
 }

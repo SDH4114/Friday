@@ -32,6 +32,7 @@ export function formatToolActivity(toolName: string, args: unknown): string {
     case "list_files": return `Raya is reading ${target ?? "the workspace"}`;
     case "web": return `Raya is searching ${target ?? "the web"}`;
     case "use_skill": return `Raya is using skill ${target ?? ""}`.trim();
+    case "create_skill": return `Raya is creating skill ${target ?? ""}`.trim();
     case "shell": return `Raya is running ${target ?? "a terminal command"}`;
     case "subagent": return `Raya is delegating ${target ?? "a task"}`;
     case "memory": {

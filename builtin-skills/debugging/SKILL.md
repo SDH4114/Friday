@@ -1,3 +1,8 @@
+---
+name: debugging
+description: Diagnose failures, regressions, crashes, timeouts, and confusing behavior. Use when the user reports that something is broken or unreliable.
+---
+
 # Debugging
 
 Use this skill when the user reports a failure, regression, crash, or confusing behavior.

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Raya Self Knowledge"
+  short_description: "Understand and safely improve Raya itself"
+  default_prompt: "Use $raya-self-knowledge to inspect and improve Raya safely."

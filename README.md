@@ -184,9 +184,11 @@ Blocked commands are checked before Raya invokes the shell, including common wra
 
 ## Skills
 
-Raya ships with built-in `debugging`, `implementation`, `project-audit`, and `web-research` skills. The installer copies them into `~/.raya/skills/` and the first Raya startup performs the same sync as a fallback. Existing folders are never replaced, so user edits remain yours. A later Raya update only installs newly added skills that are missing.
+Raya ships with built-in `debugging`, `implementation`, `project-audit`, `web-research`, `raya-self-knowledge`, and `create-raya-skills` skills. The self-knowledge package documents Raya's purpose, runtime, source map, safety boundaries, and repair workflow. The installer copies built-ins into `~/.raya/skills/` and the first Raya startup performs the same sync as a fallback. Existing folders are never replaced, so user edits remain yours. A later Raya update only installs newly added skills that are missing.
 
-Raya automatically loads `SKILL.md` instructions from both `~/.raya/skills/<skill>/SKILL.md` and `<workspace>/.agents/skills/<skill>/SKILL.md`. Relevant skills are supplied to the agent at session start. Before applying one, the agent calls its built-in `use_skill` marker so the TUI can show `Raya is using skill …`. Skills are context instructions, never executable code by themselves.
+Raya discovers `SKILL.md` metadata from both `~/.raya/skills/<skill>/SKILL.md` and `<workspace>/.agents/skills/<skill>/SKILL.md`. Only the compact catalog is added at session start; complete instructions and requested references are loaded through `use_skill` when relevant. This keeps the model context small and makes skill activation visible in the TUI. Skills are context instructions, never executable code or additional permissions by themselves.
+
+In Build mode Raya can create a persistent skill with the approval-aware `create_skill` tool when the user asks to teach her a reusable workflow. She may propose a skill after noticing a recurring process, but Standard security still asks before it is written. Existing skills are not overwritten unless that exact update was requested.
 
 ```bash
 raya skills list       # built-in, user, workspace, and package skills
