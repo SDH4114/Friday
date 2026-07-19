@@ -12,7 +12,7 @@ macOS and Linux only (Windows is not supported in v1):
 curl -fsSL https://raw.githubusercontent.com/SDH4114/Raya-APPLE/prime/install.sh | bash
 ```
 
-The installer installs Node.js 22 with `nvm` if needed, downloads the repository, builds it, and installs the `raya` binary globally. This GitHub-source approach works before the npm package is published. After publishing `@sdh4114/raya`, the equivalent install is:
+The installer installs Node.js 22 with `nvm` if needed, downloads the repository, builds it, and installs a self-contained `raya` binary globally. It also makes the command available in the terminal that started the installation, including when npm's global bin directory is missing from `PATH`. This GitHub-source approach works before the npm package is published. After publishing `@sdh4114/raya`, the equivalent install is:
 
 ```bash
 npm install -g @sdh4114/raya
