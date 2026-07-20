@@ -1,0 +1,10 @@
+{
+  "name": "Raya",
+  "short_name": "Raya",
+  "description": "Open-source personal AI PC assistant and coding-agent harness.",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#030B12",
+  "theme_color": "#030B12",
+  "icons": [{ "src": "brand/raya-mark.svg", "sizes": "any", "type": "image/svg+xml" }]
+}
