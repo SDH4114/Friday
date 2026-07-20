@@ -30,7 +30,9 @@ The static site is written to `website/out/`. Serve that directory as plain file
 
 ## GitHub Pages
 
-The repository workflow at `.github/workflows/pages.yml` builds `website/` with the `/Raya-APPLE` base path and deploys `website/out/` through GitHub's official Pages actions. In repository settings, set Pages source to **GitHub Actions**.
+The repository workflow at `.github/workflows/pages.yml` builds `website/` with the `/Raya-APPLE` base path and deploys `website/out/` through GitHub's official Pages actions.
+
+Before the first deployment, enable Pages once in **Settings → Pages → Build and deployment → Source → GitHub Actions**. GitHub does not allow the workflow's built-in `GITHUB_TOKEN` to create the Pages site because that operation requires repository administration permission. After Pages is enabled, pushes to `prime` deploy automatically.
 
 The configuration uses:
 
