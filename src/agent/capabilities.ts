@@ -21,7 +21,7 @@ export const RAYA_CLI_COMMANDS = [
 export const RAYA_SLASH_COMMANDS = [
   ["/help", "Show available commands"],
   ["/providers", "Connect, update, or choose providers"],
-  ["/models", "Browse and choose models from all providers"],
+  ["/models", "Choose a model, then choose one of its provider-reported reasoning levels"],
   ["/thinking", "Set the model reasoning level"],
   ["/character", "Choose Raya's personality"],
   ["/theme", "Choose and apply the global theme"],

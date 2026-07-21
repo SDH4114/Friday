@@ -38,6 +38,8 @@ If Raya has no configured provider, the first interactive launch displays the av
 ```bash
 raya login             # choose and connect a provider
 raya login anthropic   # connect a specific provider
+raya login openai      # connect an OpenAI API key for GPT-5.6
+raya login moonshotai  # connect a Moonshot API key for Kimi K3
 raya "explain this repository"  # one-shot prompt
 raya status
 raya models
@@ -98,6 +100,8 @@ Useful interactive commands:
 /clear
 /exit
 ```
+
+`/models` is a two-step picker: choose a model first, then Raya reads that model's provider metadata and shows only its supported reasoning levels. `/thinking` uses the same model-specific list. If a stored level is incompatible with a newly loaded model, Raya moves it to the nearest supported level instead of sending an invalid setting to the provider.
 
 `/skills` opens a compact searchable dropdown of all built-in, user, workspace, and package skills. The list displays short stable rows like `/providers`, while searching still matches both the skill name and its complete description. Selecting one inserts a visible `@skill:<name>` marker into the current input instead of sending the command immediately. Open `/skills` again anywhere in that input to attach more skills; existing markers are preserved, for example `@skill:debugging @skill:implementation fix this failure`. Raya loads every selected skill with `use_skill` before answering. The information command is lowercase: `/about`.
 
@@ -175,6 +179,10 @@ raya config --provider ollama --model qwen3:8b
 ```
 
 Local providers are keyless by default, have zero API cost metadata, appear in `/providers` as connected, and appear in `/models` alongside cloud models. Tool calling still depends on the capabilities and chat template of the model served by your local runtime.
+
+## GPT-5.6 and Kimi K3
+
+`raya login openai` enables the OpenAI API catalog, including `gpt-5.6` (the Sol alias), `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`. The OpenAI Codex OAuth provider also includes `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`; availability depends on your ChatGPT/Codex account. `raya login moonshotai` enables Moonshot AI, including `kimi-k3`. Choose any available model with `/models` or `raya config --provider <provider> --model <model>`. API-key billing belongs to the connected provider; Raya displays the current standard token-price metadata in its usage accounting.
 
 ## AGENTS.md and SOUL.md
 

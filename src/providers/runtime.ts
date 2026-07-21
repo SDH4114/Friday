@@ -3,9 +3,12 @@ import {
   type Credential,
   type Model,
   type Models,
+  type MutableModels,
   type OAuthCredential,
   type Provider,
-  createProvider
+  clampThinkingLevel,
+  createProvider,
+  getSupportedThinkingLevels
 } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
@@ -20,9 +23,24 @@ export type RayaProviderRuntime = {
   credentials: FileCredentialStore;
 };
 
+function appendModels(models: MutableModels, providerId: string, additions: Model<any>[]): void {
+  const provider = models.getProvider(providerId);
+  if (!provider) return;
+
+  const existing = provider.getModels();
+  const missing = additions.filter((candidate) => !existing.some((model) => model.id === candidate.id));
+  if (missing.length === 0) return;
+
+  models.setProvider({ ...provider, getModels: () => [...existing, ...missing] });
+}
+
 export function createProviderRuntime(config: RayaConfig = loadConfig()): RayaProviderRuntime {
   const credentials = new FileCredentialStore();
   const models = builtinModels({ credentials, authContext: nodeAuthContext });
+  const gpt56Sol = models.getModel("openai", "gpt-5.6-sol");
+  if (gpt56Sol) {
+    appendModels(models, "openai", [{ ...gpt56Sol, id: "gpt-5.6", name: "GPT-5.6 (Sol)" }]);
+  }
   const grouped = new Map<string, RayaConfig["localModels"]>();
   for (const item of config.localModels) {
     grouped.set(item.provider, [...(grouped.get(item.provider) ?? []), item]);
@@ -81,6 +99,17 @@ export function getConfiguredModel(runtime: RayaProviderRuntime, providerId: str
   }
 
   return model;
+}
+
+export function getModelThinkingLevels(model: Model<any>): RayaConfig["thinkingLevel"][] {
+  return getSupportedThinkingLevels(model) as RayaConfig["thinkingLevel"][];
+}
+
+export function clampModelThinkingLevel(
+  model: Model<any>,
+  level: RayaConfig["thinkingLevel"]
+): RayaConfig["thinkingLevel"] {
+  return clampThinkingLevel(model, level) as RayaConfig["thinkingLevel"];
 }
 
 async function promptCredential(provider: Provider): Promise<Credential> {

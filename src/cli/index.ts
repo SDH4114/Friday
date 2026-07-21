@@ -2,7 +2,7 @@
 
 import { Command, Help } from "commander";
 import type { Agent } from "@earendil-works/pi-agent-core";
-import { getSupportedThinkingLevels, type Model } from "@earendil-works/pi-ai";
+import type { Model } from "@earendil-works/pi-ai";
 import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { loadConfig, normalizeConfig, updateConfig, type RayaConfig } from "../config/config.js";
@@ -10,12 +10,15 @@ import { RAYA_COMMANDS_PATH, RAYA_CONFIG_PATH, RAYA_SKILLS_DIR, RAYA_SOUL_PATH }
 import { readSecret, writeSecret } from "../config/secrets.js";
 import {
   createProviderRuntime,
+  clampModelThinkingLevel,
   getConfiguredModel,
+  getModelThinkingLevels,
   getProvider,
   isProviderConfigured,
   loginProvider,
   logoutProvider
 } from "../providers/runtime.js";
+import { providerModelSuggestions } from "../providers/model-picker.js";
 import { createRayaAgent, createRayaTools } from "../agent/create-agent.js";
 import { RAYA_SLASH_COMMANDS, rayaAboutMarkdown } from "../agent/capabilities.js";
 import { commandMatchesAutoApprovePrefix } from "../tools/shell.js";
@@ -107,7 +110,9 @@ function formatDirectory(path: string): string {
 
 const preferredProviders = [
   { id: "openai-codex", label: "OpenAI Codex", hint: "ChatGPT/Codex OAuth subscription login" },
+  { id: "openai", label: "OpenAI API", hint: "OpenAI API key · GPT-5.6" },
   { id: "anthropic", label: "Anthropic", hint: "Anthropic API key" },
+  { id: "moonshotai", label: "Moonshot AI / Kimi", hint: "Moonshot API key · Kimi K3" },
   { id: "openrouter", label: "OpenRouter", hint: "OpenRouter API key" },
   { id: "opencode", label: "OpenCode Zen", hint: "OpenCode API key" },
   { id: "huggingface", label: "Hugging Face", hint: "Hugging Face API token" }
@@ -732,7 +737,7 @@ program
   .option("--provider <provider>", "Set provider id.")
   .option("--model <model>", "Set model id.")
   .option("--mode <mode>", "Set default mode: plan or build.")
-  .option("--thinking <level>", "Set thinking level: off, minimal, low, medium, high, xhigh.")
+  .option("--thinking <level>", "Set thinking level: off, minimal, low, medium, high, xhigh, max.")
   .option("--security <mode>", "Set security mode: standard or full.")
   .option("--design <style>", "Set startup design: small or large.")
   .option("--theme <theme>", "Set global theme: ocean or sunset.")
@@ -742,25 +747,32 @@ program
     const options = commandOptions<{ provider?: string; model?: string; mode?: string; thinking?: string; security?: string; design?: string; theme?: string; hotkey: string[]; resetHotkeys?: boolean }>(rawOptions);
     const config = loadConfig();
     if (options.mode !== undefined && options.mode !== "plan" && options.mode !== "build") throw new Error("--mode must be plan or build.");
-    if (options.thinking !== undefined && !["off", "minimal", "low", "medium", "high", "xhigh"].includes(options.thinking)) throw new Error("--thinking must be off, minimal, low, medium, high, or xhigh.");
+    if (options.thinking !== undefined && !["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(options.thinking)) throw new Error("--thinking must be off, minimal, low, medium, high, xhigh, or max.");
     if (options.security !== undefined && options.security !== "standard" && options.security !== "full") throw new Error("--security must be standard or full.");
     if (options.design !== undefined && options.design !== "small" && options.design !== "large") throw new Error("--design must be small or large.");
     if (options.theme !== undefined && !THEME_IDS.includes(options.theme as ThemeId)) throw new Error("--theme must be ocean or sunset.");
     let provider = config.provider;
     let modelId = config.model;
-    if (options.provider !== undefined || options.model !== undefined) {
+    let selectedModel: Model<any> | undefined;
+    if (options.provider !== undefined || options.model !== undefined || options.thinking !== undefined) {
       const runtime = createProviderRuntime();
       provider = options.provider ?? config.provider;
       getProvider(runtime, provider);
       const fallbackModel = provider === config.provider ? config.model : runtime.models.getModels(provider)[0]?.id;
       modelId = options.model ?? fallbackModel ?? "";
       if (!modelId) throw new Error(`Provider has no known models: ${provider}`);
-      getConfiguredModel(runtime, provider, modelId);
+      selectedModel = getConfiguredModel(runtime, provider, modelId);
+      if (options.thinking !== undefined && !getModelThinkingLevels(selectedModel).includes(options.thinking as RayaConfig["thinkingLevel"])) {
+        throw new Error(`${selectedModel.name} supports these thinking levels: ${getModelThinkingLevels(selectedModel).join(", ")}.`);
+      }
     }
     const patch: Partial<RayaConfig> = {};
     if (options.provider !== undefined || options.model !== undefined) {
       patch.provider = provider;
       patch.model = modelId;
+      if (options.thinking === undefined && selectedModel) {
+        patch.thinkingLevel = clampModelThinkingLevel(selectedModel, config.thinkingLevel);
+      }
     }
     if (options.mode !== undefined) patch.mode = options.mode as RayaConfig["mode"];
     if (options.thinking !== undefined) patch.thinkingLevel = options.thinking as RayaConfig["thinkingLevel"];
@@ -826,6 +838,11 @@ program
     }
 
     let model = getConfiguredModel(runtime, config.provider, modelId);
+    const startupThinkingLevel = clampModelThinkingLevel(model, config.thinkingLevel);
+    if (startupThinkingLevel !== config.thinkingLevel) {
+      config = { ...config, thinkingLevel: startupThinkingLevel };
+      updateConfig({ thinkingLevel: startupThinkingLevel });
+    }
 
     let session = createSession(config);
 
@@ -853,6 +870,8 @@ program
       nextSession.config = { ...nextSession.config, theme: globalConfig.theme, hotkeys: globalConfig.hotkeys, mcpServers: globalConfig.mcpServers };
       setActiveTheme(globalConfig.theme);
       const nextModel = getConfiguredModel(runtime, nextSession.config.provider, nextSession.config.model);
+      const nextThinkingLevel = clampModelThinkingLevel(nextModel, nextSession.config.thinkingLevel);
+      nextSession.config = { ...nextSession.config, thinkingLevel: nextThinkingLevel };
       const nextAgent = createRayaAgent({
         config: nextSession.config,
         model: nextModel,
@@ -912,7 +931,7 @@ program
         }
         const firstModel = runtime.models.getModels(provider)[0];
         if (!firstModel) throw new Error(`Provider has no known models: ${provider}`);
-        config = { ...config, provider, model: firstModel.id };
+        config = { ...config, provider, model: firstModel.id, thinkingLevel: clampModelThinkingLevel(firstModel, config.thinkingLevel) };
         persist(activeAgent);
         console.log(color(`Provider: ${provider}, model: ${firstModel.id}`, theme.green));
         return rebuildAgent(session);
@@ -924,21 +943,32 @@ program
           return;
         }
         const provider = args[1];
-        const modelId = args.slice(2).join(" ");
+        const thinkingIndex = args.indexOf("--thinking", 2);
+        const modelId = args.slice(2, thinkingIndex < 0 ? undefined : thinkingIndex).join(" ");
+        const requestedThinking = thinkingIndex < 0 ? undefined : args[thinkingIndex + 1] as RayaConfig["thinkingLevel"] | undefined;
         if (!connectedProviders.has(provider)) {
           await loginProvider(runtime, provider);
           connectedProviders.add(provider);
         }
         model = getConfiguredModel(runtime, provider, modelId);
-        config = { ...config, provider, model: model.id };
+        const supported = getModelThinkingLevels(model);
+        if (!requestedThinking) {
+          console.log(`Choose a thinking level for ${model.name}: ${supported.join(", ")}.`);
+          return;
+        }
+        if (!supported.includes(requestedThinking)) {
+          console.log(`${model.name} supports: ${supported.join(", ")}.`);
+          return;
+        }
+        config = { ...config, provider, model: model.id, thinkingLevel: requestedThinking };
         persist(activeAgent);
-        console.log(color(`Model: ${model.name} · ${provider}`, theme.green));
+        console.log(color(`Model: ${model.name} · ${provider} · thinking: ${requestedThinking}`, theme.green));
         return rebuildAgent(session);
       }
 
       if (name === "thinking") {
         const requested = args[0] === "ultra" ? "xhigh" : args[0];
-        const supported = getSupportedThinkingLevels(model);
+        const supported = getModelThinkingLevels(model);
         if (!requested || !supported.includes(requested as typeof supported[number])) {
           console.log(`This model supports: ${supported.join(", ") || "no configurable reasoning levels"}.`);
           return;
@@ -1149,7 +1179,7 @@ program
           name: item.name,
           detail: `${item.config.provider}/${item.config.model} · ${item.config.mode}`
         })),
-        thinkingSuggestions: () => getSupportedThinkingLevels(model),
+        thinkingSuggestions: () => getModelThinkingLevels(model),
         skillSuggestions: () => listAvailableSkills().map((skill) => ({
           name: skill.name,
           description: skill.description
@@ -1194,21 +1224,11 @@ program
             ...(others.length ? others.map(suggestion) : [{ value: "  (none)", description: "", selectable: false }])
           ];
         },
-        modelSuggestions: (query) => {
-          const normalized = query.toLowerCase().trim();
-          return runtime.models.getProviders()
-            .flatMap((provider) => runtime.models.getModels(provider.id).map((item) => ({ provider, item })))
-            .filter(({ provider, item }) => !normalized || `${provider.id} ${provider.name} ${item.id} ${item.name}`.toLowerCase().includes(normalized))
-            .sort((a, b) => {
-              const aRank = a.provider.id === config.provider ? 2 : connectedProviders.has(a.provider.id) ? 1 : 0;
-              const bRank = b.provider.id === config.provider ? 2 : connectedProviders.has(b.provider.id) ? 1 : 0;
-              return bRank - aRank || a.provider.name.localeCompare(b.provider.name) || a.item.name.localeCompare(b.item.name);
-            })
-            .map(({ provider, item }) => ({
-              value: `/models select ${provider.id} ${item.id}`,
-              description: `${provider.name} · ${item.name}${provider.id === config.provider && item.id === config.model ? " · active" : ""}`
-            }));
-        },
+        modelSuggestions: (query) => providerModelSuggestions(runtime.models, query, {
+          activeProvider: config.provider,
+          activeModel: config.model,
+          connectedProviders
+        }),
         statusInfo: () => {
           const assistantMessages = session.messages.filter((message) => message.role === "assistant") as Array<{ usage?: { totalTokens?: number } }>;
           const contextTokens = [...assistantMessages].reverse().find((message) => message.usage?.totalTokens)?.usage?.totalTokens ?? 0;

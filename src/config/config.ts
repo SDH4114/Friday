@@ -55,7 +55,7 @@ const ConfigSchema = z.object({
   provider: z.string().default("openai-codex"),
   model: z.string().default("gpt-5.4"),
   mode: z.enum(["plan", "build"]).default("plan"),
-  thinkingLevel: z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]).default("minimal"),
+  thinkingLevel: z.enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"]).default("minimal"),
   autoApproveCommands: z.array(z.string().min(1)).default([]),
   blockedCommands: z.array(z.string().min(1)).default(["rm"]),
   securityMode: z.enum(["standard", "full"]).default("standard"),

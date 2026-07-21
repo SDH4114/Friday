@@ -282,7 +282,7 @@ export function commandSuggestions(
   }
   const thinkingPrefix = "/thinking ";
   if (value.startsWith(thinkingPrefix) && cursor >= thinkingPrefix.length) {
-    const labels: Record<string, string> = { off: "Off", minimal: "Light", low: "Low", medium: "Medium", high: "High", xhigh: "Ultra" };
+    const labels: Record<string, string> = { off: "Off", minimal: "Light", low: "Low", medium: "Medium", high: "High", xhigh: "Ultra", max: "Max" };
     const levels = thinkingSuggestions().map((id) => [id, labels[id] ?? id] as const);
     const query = value.slice(thinkingPrefix.length, cursor).toLowerCase();
     return levels.filter(([id, label]) => id.startsWith(query) || label.toLowerCase().startsWith(query))

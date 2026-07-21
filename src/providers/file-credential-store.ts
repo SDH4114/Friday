@@ -1,4 +1,4 @@
-import type { Credential, CredentialStore } from "@earendil-works/pi-ai";
+import type { Credential, CredentialInfo, CredentialStore } from "@earendil-works/pi-ai";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { readSecret, writeSecret } from "../config/secrets.js";
 import { RAYA_AUTH_PATH } from "../config/paths.js";
@@ -35,6 +35,13 @@ export class FileCredentialStore implements CredentialStore {
 
   async read(providerId: string): Promise<Credential | undefined> {
     return this.enqueue(() => readAuthFile()[providerId]);
+  }
+
+  async list(): Promise<readonly CredentialInfo[]> {
+    return this.enqueue(() => Object.entries(readAuthFile()).map(([providerId, credential]) => ({
+      providerId,
+      type: credential.type
+    })));
   }
 
   async modify(

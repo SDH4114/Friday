@@ -53,4 +53,4 @@ The configuration uses:
 
 ## Replacing the text mascot
 
-The current design intentionally uses a text/ASCII Raya. If visual mascot assets are introduced later, keep the `RayaMascot` pose API and centralize every path and alt text in `config/mascot.ts` so page layouts do not need to change.
+The current design intentionally uses a terminal-style Raya interface. Keep the `RayaMascot` pose API if the terminal preview is extended so page layouts do not need to change.
