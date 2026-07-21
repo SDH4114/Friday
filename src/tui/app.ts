@@ -174,7 +174,6 @@ function statusLines(info: TuiSessionInfo): string[] {
     `Mode       ${info.mode}`,
     `Workspace  ${info.directory}`,
     `Session    ${info.session ?? "Fresh session"}`,
-    `Memory     ${info.memory}`
   ];
 }
 
@@ -188,11 +187,6 @@ function protocolLines(hotkeys: TuiHotkeys = DEFAULT_HOTKEYS): string[] { return
   "",
   "CONTROL DECK",
   `${formatHotkey(hotkeys.toggleMode).padEnd(12)} switch Plan ↔ Build`,
-  "@            attach workspace files/folders",
-  "Shift+Enter  new line",
-  "Up/Down      move between input lines",
-  "Ctrl+⌫/Del   delete current line",
-  "Ctrl+V       paste text or an image",
   "/help        commands and shortcuts",
   "/sessions    continue earlier work",
   `/exit and ${formatHotkey(hotkeys.exit).padEnd(12)} quit`,
