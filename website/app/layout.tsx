@@ -6,10 +6,10 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteConfig.url),
-  title: { default: "Raya — Your companion in the depth of code", template: "%s · Raya" },
+  title: { default: "Raya — A personal AI harness you can shape", template: "%s · Raya" },
   description: siteConfig.description,
   alternates: { canonical: "./" },
-  openGraph: { type: "website", title: "Raya — Your companion in the depth of code", description: siteConfig.description, url: siteConfig.url, siteName: "Raya" },
+  openGraph: { type: "website", title: "Raya — A personal AI harness you can shape", description: siteConfig.description, url: siteConfig.url, siteName: "Raya" },
   twitter: { card: "summary", title: "Raya", description: siteConfig.description },
   manifest: withBasePath("/manifest.webmanifest"),
   icons: { icon: withBasePath("/brand/raya-mark.svg") }

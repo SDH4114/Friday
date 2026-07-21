@@ -63,5 +63,6 @@ export const mainNavigation = [
   { label: "Features", href: "/#features" },
   { label: "Documentation", href: "/docs" },
   { label: "GitHub", href: "https://github.com/SDH4114/Raya-APPLE", external: true },
+  { label: "Telegram", href: "https://t.me/BreakRulesStudio", external: true },
   { label: "Community", href: "/#community" }
 ] as const;

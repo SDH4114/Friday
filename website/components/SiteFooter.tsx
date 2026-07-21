@@ -5,7 +5,7 @@ import { siteConfig } from "@/config/site";
 const groups = [
   { title: "Product", links: [["Features", "/#features"], ["Installation", "/docs/installation"], ["Documentation", "/docs"], ["Architecture", "/docs/architecture"], ["Limitations", "/docs/limitations"]] },
   { title: "Developers", links: [["GitHub", siteConfig.github], ["Contributing", "/docs/contributing"], ["Issues", siteConfig.issues], ["Commands", "/docs/reference/commands"]] },
-  { title: "Project", links: [["MIT License", siteConfig.license], ["About Raya", "/about"], ["Security", "/docs/security"]] }
+  { title: "Project", links: [["MIT License", siteConfig.license], ["About Raya", "/about"], ["Security", "/docs/security"], ["Telegram channel", siteConfig.telegramChannel]] }
 ] as const;
 
 export function SiteFooter() {

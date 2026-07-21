@@ -1,6 +1,6 @@
 export const siteConfig = {
   name: "Raya",
-  description: "An open-source personal AI PC assistant and coding-agent harness for macOS and Linux.",
+  description: "An open-source personal AI agent harness that learns, improves with your direction, and adapts to your workflow on macOS and Linux.",
   url: "https://sdh4114.github.io/Raya-APPLE",
   github: "https://github.com/SDH4114/Raya-APPLE",
   issues: "https://github.com/SDH4114/Raya-APPLE/issues",
@@ -8,7 +8,7 @@ export const siteConfig = {
   installScript: "https://raw.githubusercontent.com/SDH4114/Raya-APPLE/prime/install.sh",
   installCommand: "curl -fsSL https://raw.githubusercontent.com/SDH4114/Raya-APPLE/prime/install.sh | bash",
   telegram: null,
-  telegramChannel: null
+  telegramChannel: "https://t.me/BreakRulesStudio"
 } as const;
 
 export const withBasePath = (path: string): string => `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}${path}`;
