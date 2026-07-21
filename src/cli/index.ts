@@ -69,7 +69,7 @@ program.configureHelp({
     return command.name() === "web" ? term.replace(/^web\b/, "web (demo)") : term;
   }
 });
-const VERSION = "0.1.1";
+const VERSION = "0.1.2";
 let builtinCommandNames = new Set<string>();
 setActiveTheme(loadConfig().theme);
 
