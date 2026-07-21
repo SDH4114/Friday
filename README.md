@@ -88,6 +88,7 @@ Useful interactive commands:
 /providers
 /models
 /thinking
+/character
 /theme
 /security
 /sessions
@@ -182,7 +183,7 @@ On every agent creation Raya first checks `~/.raya/AGENTS.md` and `~/.raya/SOUL.
 - `AGENTS.md` contains project instructions.
 - `SOUL.md` is your user-authored Raya personality: tone, style, and character.
 
-`SOUL.md` is not a hidden system prompt; it is deliberately a file you own and may edit at any time.
+`SOUL.md` is not a hidden system prompt; it is deliberately a file you own and may edit at any time. A fresh installation creates `~/.raya/SOUL.md` with Raya's complete calm, serious, kind default personality, but never overwrites an existing file. Use `/character` and choose `default` or another complete personality profile to intentionally replace it, or edit the file yourself for complete control.
 
 ## Sessions and long-term-memory foundation
 

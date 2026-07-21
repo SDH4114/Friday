@@ -23,6 +23,7 @@ export const RAYA_SLASH_COMMANDS = [
   ["/providers", "Connect, update, or choose providers"],
   ["/models", "Browse and choose models from all providers"],
   ["/thinking", "Set the model reasoning level"],
+  ["/character", "Choose Raya's personality"],
   ["/theme", "Choose and apply the global theme"],
   ["/security", "Choose Standard or Full access"],
   ["/sessions", "Create, open, or delete sessions"],

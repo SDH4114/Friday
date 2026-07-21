@@ -6,7 +6,7 @@ import { getSupportedThinkingLevels, type Model } from "@earendil-works/pi-ai";
 import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { loadConfig, normalizeConfig, updateConfig, type RayaConfig } from "../config/config.js";
-import { RAYA_COMMANDS_PATH, RAYA_CONFIG_PATH, RAYA_SKILLS_DIR } from "../config/paths.js";
+import { RAYA_COMMANDS_PATH, RAYA_CONFIG_PATH, RAYA_SKILLS_DIR, RAYA_SOUL_PATH } from "../config/paths.js";
 import { readSecret, writeSecret } from "../config/secrets.js";
 import {
   createProviderRuntime,
@@ -29,7 +29,7 @@ import type { ToolExecutionPolicy } from "../types/tool.js";
 import { startScheduler } from "../scheduler/store.js";
 import { homedir } from "node:os";
 import { join, relative, resolve } from "node:path";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { RAYA_PLUGINS_DIR } from "../config/paths.js";
 import { openApplication, openUrl, runGitShortcut, webSearchUrl, youtubeSearchUrl } from "./shortcuts.js";
@@ -38,6 +38,7 @@ import { runWebServer } from "../web/server.js";
 import { formatMcpStatusLines, McpRuntime } from "../mcp/client.js";
 import { ensureBuiltinSkills } from "../skills/bootstrap.js";
 import { listAvailableSkills } from "../skills/loader.js";
+import { characterProfile, characterSuggestions } from "../character/catalog.js";
 import {
   addCustomCommand,
   formatCustomCommand,
@@ -948,6 +949,17 @@ program
         return;
       }
 
+      if (name === "character") {
+        const profile = characterProfile(args[0]);
+        if (!profile) {
+          console.log("Use /character and choose a personality from the dropdown.");
+          return;
+        }
+        writeFileSync(RAYA_SOUL_PATH, profile.soul ? `${profile.soul.trimEnd()}\n` : "", { mode: 0o600 });
+        console.log(color(`Character: ${profile.label}`, theme.green));
+        return;
+      }
+
       if (name === "theme") {
         const requested = (args[0] === "global" || args[0] === "session" ? args[1] : args[0]) as ThemeId | undefined;
         if (!requested || !THEME_IDS.includes(requested)) {
@@ -1142,6 +1154,7 @@ program
           name: skill.name,
           description: skill.description
         })),
+        characterSuggestions: (query) => characterSuggestions(query),
         themeSuggestions: () => {
           const globalTheme = loadConfig().theme;
           return [
