@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { webSearchUrl, youtubeSearchUrl } from "../src/cli/shortcuts.js";
+import { webSearchUrl, YOUTUBE_HOME_URL, youtubeSearchUrl } from "../src/cli/shortcuts.js";
+
+test("YouTube shortcut without a query opens the YouTube homepage", () => {
+  assert.equal(YOUTUBE_HOME_URL, "https://www.youtube.com/");
+});
 
 test("YouTube shortcut builds an encoded search URL", () => {
   assert.equal(

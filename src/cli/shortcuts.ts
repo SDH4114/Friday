@@ -14,6 +14,8 @@ export function youtubeSearchUrl(query: string): string {
   return `https://www.youtube.com/results?search_query=${encodeSearchQuery(query)}`;
 }
 
+export const YOUTUBE_HOME_URL = "https://www.youtube.com/";
+
 export function webSearchUrl(query: string): string {
   return `https://www.google.com/search?q=${encodeSearchQuery(query)}`;
 }

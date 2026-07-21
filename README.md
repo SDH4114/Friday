@@ -104,7 +104,7 @@ Useful interactive commands:
 Direct shortcuts:
 
 ```text
-raya yt <text>              Open YouTube search results in the browser
+raya yt [text]              Open YouTube, or search YouTube when text is supplied
 raya search <text>          Open a web search in the browser
 raya serach <text>          Alias for raya search (kept for convenience)
 raya git                    git add ., ask for a commit name, commit, then push

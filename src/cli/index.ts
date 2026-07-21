@@ -32,7 +32,7 @@ import { join, relative, resolve } from "node:path";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { RAYA_PLUGINS_DIR } from "../config/paths.js";
-import { openApplication, openUrl, runGitShortcut, webSearchUrl, youtubeSearchUrl } from "./shortcuts.js";
+import { openApplication, openUrl, runGitShortcut, webSearchUrl, YOUTUBE_HOME_URL, youtubeSearchUrl } from "./shortcuts.js";
 import { normalizePiPackageName } from "../plugins/package.js";
 import { runWebServer } from "../web/server.js";
 import { formatMcpStatusLines, McpRuntime } from "../mcp/client.js";
@@ -344,7 +344,7 @@ Examples and direct commands:
   raya                         Start the terminal interface
   raya web (demo)              Open the full Raya Web app (demo)
   raya git                     Stage, commit, and push the current repository
-  raya yt <text>               Open a YouTube search
+  raya yt [text]               Open YouTube or search YouTube
   raya search <text>           Open a web search
   raya open <application>      Open a desktop application
   raya gateway --setup         Configure Telegram delivery
@@ -692,12 +692,12 @@ program
 
 program
   .command("yt")
-  .argument("<query...>", "Text to search for on YouTube.")
-  .description("Open YouTube search results in the browser.")
-  .action(async (query: string[]) => {
+  .argument("[query...]", "Optional text to search for on YouTube.")
+  .description("Open YouTube, or search YouTube when text is supplied.")
+  .action(async (query: string[] = []) => {
     const text = query.join(" ").trim();
-    await openUrl(youtubeSearchUrl(text));
-    console.log(`YouTube search opened: ${text}`);
+    await openUrl(text ? youtubeSearchUrl(text) : YOUTUBE_HOME_URL);
+    console.log(text ? `YouTube search opened: ${text}` : "YouTube opened.");
   });
 
 program
