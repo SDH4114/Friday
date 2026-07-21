@@ -123,6 +123,15 @@ fi
 ensure_raya_on_path "$raya_executable"
 "$raya_executable" skills sync
 
+# Loading Raya during the first-run sync creates the user-owned default
+# personality only when it is missing. Keep installation honest: a successful
+# installer must leave this file ready before the user starts Raya.
+raya_state_dir="${RAYA_HOME:-$HOME/.raya}"
+if [ ! -f "$raya_state_dir/SOUL.md" ]; then
+  echo "Raya initialization did not create $raya_state_dir/SOUL.md." >&2
+  exit 1
+fi
+
 echo
 echo "Raya installed."
 echo "Next steps:"
