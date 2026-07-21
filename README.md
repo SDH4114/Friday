@@ -50,6 +50,7 @@ raya gateway --start
 raya gateway --restart
 raya mcp list
 raya skills list
+raya update            # check GitHub, then ask before updating Raya
 raya commands list
 raya web               # open the full local Web application demo
 ```

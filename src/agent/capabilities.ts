@@ -11,6 +11,7 @@ export const RAYA_CLI_COMMANDS = [
   ["raya plugin install|list", "Manage supported Pi packages"],
   ["raya mcp list|add|enable|disable|remove|test", "Manage MCP servers"],
   ["raya skills list|sync", "Inspect or synchronize built-in skills"],
+  ["raya update", "Check GitHub for a newer version and update after confirmation"],
   ["raya providers / models", "Inspect providers and models"],
   ["raya config / status", "Change or inspect Raya configuration"],
   ["raya yt / search / serach", "Open YouTube or web searches"],

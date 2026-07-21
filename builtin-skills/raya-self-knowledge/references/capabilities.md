@@ -1,12 +1,13 @@
 # Raya Capabilities and Limits
 
-`src/agent/capabilities.ts` is the executable shared catalog injected into Raya's system prompt and rendered by `/about` and `/help`. It covers every built-in top-level command (`commands`, `local`, `web`, provider auth, Telegram gateway, plugins, MCP, skills, status/config, providers/models, search shortcuts, Git, and application opening), every slash command, every core tool, connected MCP resource/prompt adapters, persistent stores, and honest limits. Personal commands from `commands.json` are added to the prompt dynamically. Verify new functionality there as well as at its real registration point so Raya never describes stale or imaginary capabilities.
+`src/agent/capabilities.ts` is the executable shared catalog injected into Raya's system prompt and rendered by `/about` and `/help`. It covers every built-in top-level command (`commands`, `local`, `web`, provider auth, Telegram gateway, plugins, MCP, skills, update, status/config, providers/models, search shortcuts, Git, and application opening), every slash command, every core tool, connected MCP resource/prompt adapters, persistent stores, and honest limits. Personal commands from `commands.json` are added to the prompt dynamically. Verify new functionality there as well as at its real registration point so Raya never describes stale or imaginary capabilities.
 
 ## Interfaces
 
 - Interactive TUI: streaming chat, Plan/Build switching, configurable core hotkeys, slash menus, prompt history, direct terminal lines, themes, and sessions. The footer shows the active model and reasoning level. `/skills` attaches a selected skill to the current message as `@skill:<name>`, and `/about` is lowercase.
 - One-shot CLI: run one prompt with the configured provider and tools.
 - Direct CLI commands: built-ins such as `raya git` and `raya open`, plus user-created shortcuts managed with `raya commands add|list|show|remove`. Extra invocation arguments are appended to the saved argument vector.
+- Updates: `raya update` reads the version published in the official GitHub branch, compares it with the local version, and runs the official installer only after an explicit `y` or `yes` confirmation.
 - Raya Web: local multi-pane chat, workspaces, AGENTS.md and SOUL.md editing, calendar, reminders, scheduled work, and linked notes.
 - Telegram: local long-polling gateway with chat restriction and inline approval for consequential remote actions.
 - Scheduler: persistent one-time and daily reminders delivered through the configured interface path.

@@ -42,6 +42,7 @@ import { formatMcpStatusLines, McpRuntime } from "../mcp/client.js";
 import { ensureBuiltinSkills } from "../skills/bootstrap.js";
 import { listAvailableSkills } from "../skills/loader.js";
 import { characterProfile, characterSuggestions } from "../character/catalog.js";
+import { compareVersions, isUpdateApproved, readGithubVersion, runGithubInstaller } from "./update.js";
 import {
   addCustomCommand,
   formatCustomCommand,
@@ -68,7 +69,7 @@ program.configureHelp({
     return command.name() === "web" ? term.replace(/^web\b/, "web (demo)") : term;
   }
 });
-const VERSION = "0.1.0";
+const VERSION = "0.1.1";
 let builtinCommandNames = new Set<string>();
 setActiveTheme(loadConfig().theme);
 
@@ -354,6 +355,7 @@ Examples and direct commands:
   raya open <application>      Open a desktop application
   raya gateway --setup         Configure Telegram delivery
   raya gateway --start         Run the Telegram gateway
+  raya update                  Check GitHub and offer to update Raya
   raya mcp list                Show configured MCP servers
   raya skills list             Show available built-in and user skills
   raya commands add serve -- npm run dev
@@ -361,6 +363,35 @@ Examples and direct commands:
   raya local add <model>       Add an Ollama/local OpenAI-compatible model
   raya "explain this repo"     Run a one-shot prompt
 `);
+
+program
+  .command("update")
+  .description("Check GitHub for a newer Raya version and update after confirmation.")
+  .action(async () => {
+    console.log("Checking the latest Raya version on GitHub...");
+    const githubVersion = await readGithubVersion();
+    console.log(`GitHub version: v${githubVersion}`);
+    console.log(`Local version:  v${VERSION}`);
+    if (compareVersions(githubVersion, VERSION) <= 0) {
+      console.log(githubVersion === VERSION ? "Raya is already up to date." : "Your local Raya version is newer than the GitHub version.");
+      return;
+    }
+
+    const rl = readline.createInterface({ input, output });
+    try {
+      const answer = (await rl.question(`Update Raya from v${VERSION} to v${githubVersion}? [y/N] `)).trim().toLowerCase();
+      if (!isUpdateApproved(answer)) {
+        console.log("Update cancelled.");
+        return;
+      }
+    } finally {
+      rl.close();
+    }
+
+    console.log("Updating Raya from GitHub...");
+    await runGithubInstaller();
+    console.log(`Raya updated to v${githubVersion}. Open a new terminal if your shell needs to refresh its PATH.`);
+  });
 
 program
   .command("commands")
