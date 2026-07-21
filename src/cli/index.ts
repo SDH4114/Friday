@@ -42,7 +42,7 @@ import { formatMcpStatusLines, McpRuntime } from "../mcp/client.js";
 import { ensureBuiltinSkills } from "../skills/bootstrap.js";
 import { listAvailableSkills } from "../skills/loader.js";
 import { characterProfile, characterSuggestions } from "../character/catalog.js";
-import { compareVersions, isUpdateApproved, readGithubVersion, runGithubInstaller } from "./update.js";
+import { compareVersions, isUpdateApproved, readGithubRelease, runGithubInstaller } from "./update.js";
 import {
   addCustomCommand,
   formatCustomCommand,
@@ -369,7 +369,8 @@ program
   .description("Check GitHub for a newer Raya version and update after confirmation.")
   .action(async () => {
     console.log("Checking the latest Raya version on GitHub...");
-    const githubVersion = await readGithubVersion();
+    const githubRelease = await readGithubRelease();
+    const githubVersion = githubRelease.version;
     console.log(`GitHub version: v${githubVersion}`);
     console.log(`Local version:  v${VERSION}`);
     if (compareVersions(githubVersion, VERSION) <= 0) {
@@ -389,7 +390,7 @@ program
     }
 
     console.log("Updating Raya from GitHub...");
-    await runGithubInstaller();
+    await runGithubInstaller(githubRelease.commit);
     console.log(`Raya updated to v${githubVersion}. Open a new terminal if your shell needs to refresh its PATH.`);
   });
 

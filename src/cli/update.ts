@@ -1,9 +1,11 @@
 import { spawn } from "node:child_process";
 
-export const GITHUB_PACKAGE_URL = "https://raw.githubusercontent.com/SDH4114/Raya-APPLE/prime/package.json";
-export const GITHUB_INSTALLER_URL = "https://raw.githubusercontent.com/SDH4114/Raya-APPLE/prime/install.sh";
+export const GITHUB_COMMIT_URL = "https://api.github.com/repos/SDH4114/Raya-APPLE/commits/prime";
+export const GITHUB_RAW_URL = "https://raw.githubusercontent.com/SDH4114/Raya-APPLE";
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
+
+export type GithubRelease = { commit: string; version: string };
 
 function parseVersion(value: string): { core: number[]; prerelease: string[] } | undefined {
   const match = value.trim().match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/);
@@ -40,24 +42,36 @@ export function isUpdateApproved(answer: string): boolean {
   return ["y", "yes"].includes(answer.trim().toLowerCase());
 }
 
-export async function readGithubVersion(fetchImpl: FetchLike = fetch): Promise<string> {
+async function fetchGithubJson(fetchImpl: FetchLike, url: string, message: string): Promise<unknown> {
   let response: Response;
   try {
-    response = await fetchImpl(GITHUB_PACKAGE_URL, { signal: AbortSignal.timeout(10_000) });
+    response = await fetchImpl(url, { signal: AbortSignal.timeout(10_000), headers: { Accept: "application/vnd.github+json" } });
   } catch (error) {
-    throw new Error(`Could not reach GitHub to check for an update: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`${message}: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (!response.ok) throw new Error(`GitHub returned ${response.status} while checking for an update.`);
-  const payload: unknown = await response.json();
-  const version = payload && typeof payload === "object" && "version" in payload ? (payload as { version?: unknown }).version : undefined;
-  if (typeof version !== "string" || !parseVersion(version)) throw new Error("GitHub's Raya package metadata has no valid version.");
-  return version;
+  return response.json();
 }
 
-export async function runGithubInstaller(fetchImpl: FetchLike = fetch): Promise<void> {
+export async function readGithubRelease(fetchImpl: FetchLike = fetch): Promise<GithubRelease> {
+  const commitPayload = await fetchGithubJson(fetchImpl, GITHUB_COMMIT_URL, "Could not reach GitHub to check for an update");
+  const commit = commitPayload && typeof commitPayload === "object" && "sha" in commitPayload ? (commitPayload as { sha?: unknown }).sha : undefined;
+  if (typeof commit !== "string" || !/^[0-9a-f]{40}$/i.test(commit)) throw new Error("GitHub's Raya branch has no valid commit reference.");
+  const payload = await fetchGithubJson(fetchImpl, `${GITHUB_RAW_URL}/${commit}/package.json`, "Could not read Raya's package metadata from GitHub");
+  const version = payload && typeof payload === "object" && "version" in payload ? (payload as { version?: unknown }).version : undefined;
+  if (typeof version !== "string" || !parseVersion(version)) throw new Error("GitHub's Raya package metadata has no valid version.");
+  return { commit, version };
+}
+
+export async function readGithubVersion(fetchImpl: FetchLike = fetch): Promise<string> {
+  return (await readGithubRelease(fetchImpl)).version;
+}
+
+export async function runGithubInstaller(commit: string, fetchImpl: FetchLike = fetch): Promise<void> {
+  if (!/^[0-9a-f]{40}$/i.test(commit)) throw new Error("Raya update received an invalid GitHub commit reference.");
   let response: Response;
   try {
-    response = await fetchImpl(GITHUB_INSTALLER_URL, { signal: AbortSignal.timeout(20_000) });
+    response = await fetchImpl(`${GITHUB_RAW_URL}/${commit}/install.sh`, { signal: AbortSignal.timeout(20_000) });
   } catch (error) {
     throw new Error(`Could not download the Raya installer: ${error instanceof Error ? error.message : String(error)}`);
   }
