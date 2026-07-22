@@ -8,6 +8,8 @@
 - One-shot CLI: run one prompt with the configured provider and tools.
 - Direct CLI commands: built-ins such as `raya git` and `raya open`, plus user-created shortcuts managed with `raya commands add|list|show|remove`. Extra invocation arguments are appended to the saved argument vector.
 - Updates: `raya update` reads the current commit from the official GitHub branch, reads that commit's version directly, compares it with the local version, and runs that same commit's official installer only after an explicit `y` or `yes` confirmation.
+- Backups: `raya backup --setup` chooses local or GitHub storage, plain `raya backup` creates a named version, and `--list` prints separate GitHub/Local tables with names, Raya versions, dates, and restore commands. Restore always asks which source to use, then reinstalls the archived package and state after `RESTORE` confirmation. Every local version is a sibling `~/raya-backups/<name>/` folder with code, `.raya`, manifest, and package archive directly inside; no date, snapshot, wrapper, or Git directory is added. Previous nested local snapshots remain compatible. GitHub operations use throwaway clones and keep no persistent local copy. `--local <name>` configures local mode and creates that named backup; `--github` provides explicit repository setup; `bakcup` is a typo-compatible alias. Read [backups.md](backups.md) for the complete storage and lifecycle contract.
+- Uninstall: `raya uninstall` removes the global package, exact Raya launchers, `RAYA_HOME`, and normally `~/raya-backups` only after `UNINSTALL`; `--keep-backups` preserves local backup history. It never deletes a remote GitHub repository.
 - Raya Web: local multi-pane chat, workspaces, AGENTS.md and SOUL.md editing, calendar, reminders, scheduled work, and linked notes.
 - Telegram: local long-polling gateway with chat restriction and inline approval for consequential remote actions.
 - Scheduler: persistent one-time and daily reminders delivered through the configured interface path.
@@ -37,6 +39,7 @@ The authoritative list is `createDefaultTools` in `src/tools/index.ts`; mode and
 - Standard security asks before consequential Build actions. Full security suppresses the interactive approval step.
 - `blockedCommands`, path containment, private-network checks, credential separation, package validation, and atomic persistence are defense-in-depth controls.
 - Raya is not an OS sandbox. Shell and filesystem tools run with the local user's permissions.
+- GitHub backups exclude `.env` and `auth.json`, touch only `.raya-backup` in the chosen repository, and should still use a private repository because other Raya state can be personal.
 
 ## Honest Limits
 

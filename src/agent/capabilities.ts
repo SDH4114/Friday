@@ -12,6 +12,8 @@ export const RAYA_CLI_COMMANDS = [
   ["raya mcp list|add|enable|disable|remove|test", "Manage MCP servers"],
   ["raya skills list|sync", "Inspect or synchronize built-in skills"],
   ["raya update", "Check GitHub for a newer version and update after confirmation"],
+  ["raya backup --setup|--list|--restore", "Configure, create, inspect, or restore local and GitHub backups"],
+  ["raya uninstall", "Remove Raya, local state, launchers, and backups after typed confirmation"],
   ["raya providers / models", "Inspect providers and models"],
   ["raya config / status", "Change or inspect Raya configuration"],
   ["raya yt / search / serach", "Open YouTube or web searches"],
@@ -68,13 +70,15 @@ Agent tools:
 Interfaces and persistence:
 - The same agent core supports the TUI, one-shot CLI, local Web app, Telegram gateway, scheduler, and subagents.
 - Providers include configured cloud models and local OpenAI-compatible endpoints such as Ollama, LM Studio, vLLM, or llama.cpp.
-- State is separated across config.json, owner-only .env credentials, commands.json, sessions.json, USER.md, MEMORY.md, scheduled.json, web.json, plugins, and skills under RAYA_HOME (normally ~/.raya).
+- State is separated across config.json, owner-only .env credentials, commands.json, sessions.json, USER.md, MEMORY.md, scheduled.json, web.json, plugins, and skills under RAYA_HOME (normally ~/.raya). Backup mode/path metadata is in config.json; the exact target is also stored owner-only in .env.
+- raya backup stores each local version directly in its own ~/raya-backups/<name> folder, with code, .raya, manifest.json, and raya-package.tgz at that folder root. It creates no date, snapshots, source/state wrapper, or Git directory. GitHub snapshots deliberately exclude .env and auth.json and commit only .raya-backup through a temporary clone that is deleted after create, list, or restore. --list groups both sources, while restore always asks GitHub or Local.
 - AGENTS.md supplies operating instructions and SOUL.md supplies user-authored personality, preferring RAYA_HOME and otherwise the nearest workspace file.
 
 Boundaries:
 - Raya is the orchestration product, not the selected language model.
 - Plan is investigation-oriented; Build enables mutation. Standard asks before consequential actions; Full skips that prompt but not blocked-command checks.
 - Skills are instructions, MCP adds capabilities, and personal raya commands are explicit local executable shortcuts. None of them creates an OS sandbox.
+- raya uninstall requires the exact word UNINSTALL. It removes the installed package, RAYA_HOME, installer launchers, and normally ~/raya-backups, but does not delete Node.js, unrelated developer source checkouts, or a remote GitHub repository.
 - Do not claim browser automation, hosted 24/7 operation, native Pi-extension execution, Windows support, or any capability absent from the running tools.`;
 }
 

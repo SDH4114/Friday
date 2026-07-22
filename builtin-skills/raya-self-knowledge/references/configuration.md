@@ -6,7 +6,7 @@ Raya uses `~/.raya` by default and honors `RAYA_HOME` for isolation. Resolve exa
 
 - `config.json`: non-secret validated settings.
 - `commands.json`: validated user-created direct commands (`name`, executable, fixed arguments, and optional description/cwd).
-- `.env`: provider and Telegram credentials with owner-only permissions.
+- `.env`: provider and Telegram credentials plus the exact `RAYA_BACKUP_TARGET`, with owner-only permissions.
 - `sessions.json`: conversations, workspace binding, and per-session config snapshots.
 - `USER.md` and `MEMORY.md`: bounded durable context.
 - `skills/`, `plugins/`, `memory/sessions/`, `scheduled.json`, and `web.json`: capability-specific state.
@@ -17,6 +17,7 @@ Raya uses `~/.raya` by default and honors `RAYA_HOME` for isolation. Resolve exa
 - Behavior: `mode`, `securityMode`, `autoApproveCommands`, `blockedCommands`.
 - Interface: `headerStyle`, `theme`, `hotkeys`.
 - Extensions: `piPackages`, `mcpServers`.
+- Backup: optional `backup` object with `mode`, display `name`, optional absolute local `directory`, optional sanitized `repository`, and `configuredAt`.
 - Limits: `shellTimeoutMs`, `webTimeoutMs`, `webMaxChars`.
 
 Core TUI hotkeys are `toggleMode`, `cancel`, `exit`, and `clearScreen`. Values use normalized chords such as `tab`, `escape`, `ctrl+c`, `ctrl+l`, `ctrl+shift+p`, or `meta+k`. Bindings must be valid and unique. Configure them with repeated `raya config --hotkey action=key` flags or restore defaults with `raya config --reset-hotkeys`.
@@ -32,6 +33,10 @@ Each `mcpServers.<name>` entry contains `enabled`, `approval`, `timeoutMs`, and 
 Compatibility normalization accepts `type` as an alias for `transport` and infers stdio from `command` or HTTP from `url`. `${ENV_VAR}` placeholders are expanded at connection time so tokens need not be written into config.
 
 Plan allows only MCP tools explicitly marked read-only. Build permits other MCP tools and applies the server's `approval` setting. Treat annotations as external claims, not proof of safety.
+
+## Backup State
+
+`raya backup --setup` or the first unconfigured `raya backup` writes non-secret backup metadata through `updateConfig` and the exact local root or Git URL through owner-only `.env` storage. Each new local version is an independent `~/raya-backups/<name>/` folder containing code, `.raya`, `manifest.json`, and `raya-package.tgz` directly at its root. There are no date folders, wrapper folders, or local Git repository, and duplicate names are rejected instead of overwritten. GitHub mode excludes `.env` and `auth.json`, stages only `.raya-backup`, and performs create/list/restore through a temporary clone outside `~/raya-backups` that is always removed afterward. `--list` groups GitHub and Local versions. Restore always asks for the source and requires typed confirmation before reinstalling code and restoring state. Legacy nested local snapshots remain readable and restorable.
 
 ## Update Rules
 

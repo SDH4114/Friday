@@ -51,6 +51,9 @@ raya gateway --restart
 raya mcp list
 raya skills list
 raya update            # check GitHub, then ask before updating Raya
+raya backup --setup    # choose GitHub or local backup storage
+raya backup            # save a named version after setup
+raya backup --list     # list rollback references
 raya commands list
 raya web               # open the full local Web application demo
 ```
@@ -207,6 +210,25 @@ Every ordinary `raya` launch starts with a transient empty session bound to the 
 Raya can autonomously write compact durable facts to `USER.md` and `MEMORY.md` through her memory tool. `src/memory/skill.ts` remains an extension hook for optional post-session consolidation beyond the built-in model-driven behavior.
 
 Set `RAYA_HOME=/path` to move config, OAuth credentials, sessions, and memory. Default model and mode are configured with `raya config --model <model> --mode plan|build`. OAuth credentials and Telegram tokens are stored with owner-only permissions in `~/.raya/.env`, separate from non-sensitive configuration.
+
+## Backup, rollback, and uninstall
+
+`raya backup --setup` interactively chooses GitHub or local storage. The first plain `raya backup` also starts setup automatically when no target exists. Backups live under `~/raya-backups`, contain Raya's source, an installable package archive, and Raya state, and use a name supplied for each saved version.
+
+```bash
+raya backup --setup
+raya backup
+raya backup --list
+raya backup --restore <reference> # always asks GitHub or Local
+
+# optional command-line setup/create
+raya backup --local "before-upgrade"
+raya backup --github https://github.com/owner/private-raya-backups.git
+```
+
+Every local version is one independent folder at `~/raya-backups/<backup-name>/`. Raya's code, `.raya`, `manifest.json`, and `raya-package.tgz` are stored directly inside it: no date folder, `snapshots`, `snapshot`, `backups`, `raya-source`, `raya-home`, or local Git repository is added. Later versions are sibling folders under `~/raya-backups`; an existing name is never overwritten. GitHub snapshots commit only `.raya-backup` inside the selected repository and deliberately exclude `.env` and `auth.json`. Raya clones that repository into a temporary system directory for create, list, or restore and removes the checkout afterward, so GitHub backups are not retained under `~/raya-backups`. Use a private repository because sessions, memory, and other personal state may still be sensitive. `raya backup --list` shows separate **GitHub backups** and **Local backups** sections with the name, Raya version, creation time, and restore command. Restore always asks which source to use, requires typing `RESTORE`, reinstalls the saved package, and restores state. Backup metadata is merged into `~/.raya/config.json`; the exact local root or Git URL is also stored with owner-only permissions as `RAYA_BACKUP_TARGET` in `~/.raya/.env`. The misspelled `raya bakcup` remains an alias for convenience.
+
+`raya uninstall` is the complete local removal command. It requires typing `UNINSTALL`, uninstalls `@sdh4114/raya`, removes installer-created Raya launchers, deletes `RAYA_HOME`, and deletes `~/raya-backups`. Use `raya uninstall --keep-backups` to preserve backups. It does not delete Node.js, unrelated developer source repositories, or a remote GitHub backup repository.
 
 To bypass Build-mode approval for trusted shell command prefixes, or to prohibit a command entirely, add `autoApproveCommands` and `blockedCommands` in `~/.raya/config.json`:
 

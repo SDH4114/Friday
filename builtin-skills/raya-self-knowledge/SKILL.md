@@ -1,6 +1,6 @@
 ---
 name: raya-self-knowledge
-description: Understand Raya's complete identity, architecture, interfaces, configuration, tools, MCP, skills, memory, safety, and source tree. Use when explaining Raya, diagnosing Raya itself, or safely repairing and improving its code or behavior.
+description: Understand Raya's complete identity, architecture, interfaces, configuration, tools, MCP, skills, memory, backups, uninstall behavior, safety, and source tree. Use when explaining Raya, diagnosing Raya itself, or safely repairing and improving its code or behavior.
 ---
 
 # Raya Self Knowledge
@@ -12,11 +12,12 @@ Raya A.P.P.L.E. is an open-source personal AI operating and coding assistant: Ad
 1. Read [architecture.md](references/architecture.md) for runtime flow, ownership boundaries, and the source map.
 2. Read [capabilities.md](references/capabilities.md) when explaining what Raya can do, which interface exposes it, or what she cannot do.
 3. Read [configuration.md](references/configuration.md) for config fields, paths, hotkeys, MCP formats, migrations, and persistent state.
-4. Read [self-maintenance.md](references/self-maintenance.md) before changing Raya internals.
-5. Inspect the current source because these references describe intended boundaries and may lag an unbuilt checkout.
-6. Treat `src/agent/capabilities.ts` as the shared runtime catalog for the system prompt, `/about`, `/help`, built-in CLI commands, slash commands, agent tools, persistence, and honest limits. Compare it with the actual Commander and tool registrations when changing capabilities.
-7. Distinguish source, `dist`, and an installed `raya` binary before diagnosing inconsistent behavior.
-8. Treat configuration, secrets, persistent state, external tools, model output, MCP content, and user files as trust boundaries.
+4. Read [backups.md](references/backups.md) for the exact local/GitHub layout, command UX, restore flow, secret handling, compatibility, and uninstall boundaries.
+5. Read [self-maintenance.md](references/self-maintenance.md) before changing Raya internals.
+6. Inspect the current source because these references describe intended boundaries and may lag an unbuilt checkout.
+7. Treat `src/agent/capabilities.ts` as the shared runtime catalog for the system prompt, `/about`, `/help`, built-in CLI commands, slash commands, agent tools, persistence, and honest limits. Compare it with the actual Commander and tool registrations when changing capabilities.
+8. Distinguish source, `dist`, and an installed `raya` binary before diagnosing inconsistent behavior.
+9. Treat configuration, secrets, persistent state, external tools, model output, MCP content, and user files as trust boundaries.
 
 ## Reason About Raya Correctly
 
@@ -25,7 +26,7 @@ Raya A.P.P.L.E. is an open-source personal AI operating and coding assistant: Ad
 - Separate global config from session state. Theme, hotkeys, MCP registrations, and installed assets are global; model, mode, messages, and workspace are carried by a session where applicable.
 - Plan is investigation-oriented. Build adds mutation tools. Standard security requests confirmation for consequential actions; Full skips interactive approval but does not disable the blocked-command defense.
 - MCP servers and skills extend Raya differently: MCP adds executable remote/local capabilities; skills add instructions and no permissions.
-- Built-in direct CLI commands are registered in `src/cli/index.ts`; user-created direct commands are validated, stored, and executed through `src/commands/store.ts`. They are explicit local process shortcuts, not agent tools or skills.
+- Built-in direct CLI commands are registered in `src/cli/index.ts`; backup mechanics live in `src/backup/store.ts`, uninstall guards live in `src/cli/uninstall.ts`, and user-created direct commands are validated, stored, and executed through `src/commands/store.ts`. They are explicit local process shortcuts, not agent tools or skills.
 - The TUI, Web app, Telegram gateway, one-shot CLI, scheduler, and subagents reuse the same core agent assembly but have different interaction and approval surfaces.
 
 ## Repair or Improve Raya

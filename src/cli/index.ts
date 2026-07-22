@@ -6,7 +6,7 @@ import type { Model } from "@earendil-works/pi-ai";
 import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { loadConfig, normalizeConfig, updateConfig, type RayaConfig } from "../config/config.js";
-import { RAYA_COMMANDS_PATH, RAYA_CONFIG_PATH, RAYA_SKILLS_DIR, RAYA_SOUL_PATH } from "../config/paths.js";
+import { RAYA_COMMANDS_PATH, RAYA_CONFIG_PATH, RAYA_HOME, RAYA_SKILLS_DIR, RAYA_SOUL_PATH } from "../config/paths.js";
 import { readSecret, writeSecret } from "../config/secrets.js";
 import {
   createProviderRuntime,
@@ -44,6 +44,17 @@ import { listAvailableSkills } from "../skills/loader.js";
 import { characterProfile, characterSuggestions } from "../character/catalog.js";
 import { compareVersions, isUpdateApproved, readGithubRelease, runGithubInstaller } from "./update.js";
 import {
+  createBackup,
+  discoverBackups,
+  RAYA_BACKUP_ROOT,
+  RAYA_BACKUP_TARGET_ENV,
+  restoreDiscoveredBackup,
+  setupGithubBackup,
+  setupLocalBackup,
+  type BackupListItem
+} from "../backup/store.js";
+import { isUninstallApproved, uninstallRaya } from "./uninstall.js";
+import {
   addCustomCommand,
   formatCustomCommand,
   listCustomCommands,
@@ -71,7 +82,7 @@ program.configureHelp({
 });
 const VERSION = "0.1.2";
 let builtinCommandNames = new Set<string>();
-setActiveTheme(loadConfig().theme);
+setActiveTheme(process.argv[2] === "uninstall" ? "ocean" : loadConfig().theme);
 
 class AsyncLock {
   private tail: Promise<void> = Promise.resolve();
@@ -356,6 +367,10 @@ Examples and direct commands:
   raya gateway --setup         Configure Telegram delivery
   raya gateway --start         Run the Telegram gateway
   raya update                  Check GitHub and offer to update Raya
+  raya backup                  Create a configured local or GitHub backup
+  raya backup --list           List versions available for rollback
+  raya backup --restore <ref>  Restore Raya and ~/.raya from a backup
+  raya uninstall               Remove Raya, ~/.raya, and Raya backups
   raya mcp list                Show configured MCP servers
   raya skills list             Show available built-in and user skills
   raya commands add serve -- npm run dev
@@ -363,6 +378,204 @@ Examples and direct commands:
   raya local add <model>       Add an Ollama/local OpenAI-compatible model
   raya "explain this repo"     Run a one-shot prompt
 `);
+
+function backupTargetLabel(backup: NonNullable<RayaConfig["backup"]>): string {
+  return backup.repository ?? backup.directory ?? RAYA_BACKUP_ROOT;
+}
+
+function persistBackupTarget(backup: NonNullable<RayaConfig["backup"]>, target: string): NonNullable<RayaConfig["backup"]> {
+  updateConfig({ backup });
+  writeSecret(RAYA_BACKUP_TARGET_ENV, target);
+  console.log(`${backup.mode === "github" ? "GitHub" : "Local"} backup configured in ${target}.`);
+  return backup;
+}
+
+async function configureBackup(options: { github?: string; local?: string } = {}): Promise<NonNullable<RayaConfig["backup"]>> {
+  if (options.github && options.local) throw new Error("Use only one backup target: --github <url> or --local <name>.");
+  if (options.github) {
+    console.log("GitHub backups include Raya code and state, but exclude ~/.raya/.env and auth.json so credentials are never committed.");
+    console.log("Use a private repository because sessions, memory, and personal configuration may still be sensitive.");
+    return persistBackupTarget(await setupGithubBackup(options.github), options.github);
+  }
+  if (options.local) {
+    const backup = await setupLocalBackup();
+    return persistBackupTarget(backup, RAYA_BACKUP_ROOT);
+  }
+
+  const rl = readline.createInterface({ input, output });
+  try {
+    const github = (await rl.question("Save Raya backups to GitHub? [y/N] ")).trim().toLowerCase();
+    if (github === "y" || github === "yes") {
+      console.log("GitHub backups include Raya code and state, but exclude ~/.raya/.env and auth.json so credentials are never committed.");
+      console.log("Use a private repository because sessions, memory, and personal configuration may still be sensitive.");
+      const repositoryUrl = (await rl.question("GitHub repository URL > ")).trim();
+      const backup = await setupGithubBackup(repositoryUrl);
+      return persistBackupTarget(backup, repositoryUrl);
+    }
+
+    const backup = await setupLocalBackup();
+    return persistBackupTarget(backup, RAYA_BACKUP_ROOT);
+  } finally {
+    rl.close();
+  }
+}
+
+async function askBackupName(): Promise<string> {
+  const rl = readline.createInterface({ input, output });
+  try {
+    return (await rl.question("Backup name / version > ")).trim();
+  } finally {
+    rl.close();
+  }
+}
+
+function backupDate(value: string): string {
+  return value.replace("T", " ").replace(/\.\d{3}Z$/, " UTC");
+}
+
+function shellArgument(value: string): string {
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
+}
+
+function printBackupGroup(title: string, backups: BackupListItem[]): void {
+  console.log(title);
+  if (!backups.length) {
+    console.log("(none)\n");
+    return;
+  }
+  const rows = backups.map((item) => [item.name, `v${item.rayaVersion}`, backupDate(item.createdAt)]);
+  const headers = ["Backup name", "Raya version", "Created"];
+  const widths = headers.map((header, index) => Math.max(header.length, ...rows.map((row) => row[index]!.length)));
+  console.log(headers.map((header, index) => header.padEnd(widths[index]!)).join("  "));
+  for (let index = 0; index < backups.length; index += 1) {
+    const item = backups[index]!;
+    console.log(rows[index]!.map((value, column) => value.padEnd(widths[column]!)).join("  "));
+    console.log(`  Restore: raya backup --restore ${shellArgument(item.name)}`);
+  }
+  console.log();
+}
+
+async function chooseBackupToRestore(reference: string | undefined): Promise<BackupListItem | undefined> {
+  const rl = readline.createInterface({ input, output });
+  try {
+    console.log("Restore from:");
+    console.log("1. GitHub");
+    console.log("2. Local");
+    let source = (await rl.question("Source [1/2] > ")).trim().toLowerCase();
+    if (source === "1" || source === "g" || source === "github") source = "github";
+    else if (source === "2" || source === "l" || source === "local") source = "local";
+    else throw new Error("Restore source must be GitHub or Local.");
+
+    const configured = loadConfig().backup;
+    if (source === "github" && configured?.mode !== "github") {
+      throw new Error("GitHub backups are not configured. Run: raya backup --setup");
+    }
+    const discovered = await discoverBackups(source === "github" ? configured : undefined);
+    const available = source === "github" ? discovered.github : discovered.local;
+    if (!available.length) throw new Error(`No ${source === "github" ? "GitHub" : "local"} backups were found.`);
+    let matches = reference
+      ? available.filter((item) => item.reference === reference || item.name === reference)
+      : available;
+    if (!matches.length) throw new Error(`Backup not found: ${reference}. Run raya backup --list.`);
+
+    let selected: BackupListItem;
+    if (matches.length === 1) {
+      selected = matches[0]!;
+    } else {
+      console.log(`Available ${source === "github" ? "GitHub" : "local"} backups:`);
+      matches.forEach((item, index) => console.log(`${index + 1}. ${item.name} · v${item.rayaVersion} · ${backupDate(item.createdAt)} · ${item.target}`));
+      const choice = Number((await rl.question("Backup number > ")).trim());
+      if (!Number.isInteger(choice) || choice < 1 || choice > matches.length) throw new Error("Choose a valid backup number.");
+      selected = matches[choice - 1]!;
+    }
+
+    console.log(`This will reinstall Raya v${selected.rayaVersion} and restore: ${selected.name}`);
+    const answer = await rl.question("Type RESTORE to continue: ");
+    if (answer.trim() !== "RESTORE") {
+      console.log("Restore cancelled.");
+      return undefined;
+    }
+    return selected;
+  } finally {
+    rl.close();
+  }
+}
+
+program
+  .command("backup")
+  .alias("bakcup")
+  .description("Configure, create, list, or restore complete Raya backups.")
+  .option("--setup", "Configure a GitHub or local backup target.")
+  .option("--github <repository>", "Configure this GitHub repository without prompting.")
+  .option("--local <name>", "Use local backups and create this backup name without prompting.")
+  .option("--list", "List saved versions and rollback references.")
+  .option("--restore [reference]", "Restore a backup, optionally by name or Git commit.")
+  .option("--name <name>", "Use this backup name without prompting.")
+  .action(async (rawOptions: unknown) => {
+    const options = commandOptions<{ setup?: boolean; github?: string; local?: string; list?: boolean; restore?: string | boolean; name?: string }>(rawOptions);
+
+    if (options.list) {
+      const backups = await discoverBackups(loadConfig().backup);
+      printBackupGroup("GitHub backups", backups.github);
+      printBackupGroup("Local backups", backups.local);
+      return;
+    }
+
+    if (options.restore !== undefined) {
+      const selected = await chooseBackupToRestore(typeof options.restore === "string" ? options.restore : undefined);
+      if (!selected) return;
+      const restored = await restoreDiscoveredBackup(selected);
+      console.log(`Restored Raya backup: ${restored.name} (v${restored.rayaVersion}).`);
+      if (!restored.secretsIncluded) console.log("GitHub backups do not contain credentials. Existing local .env/auth.json values were preserved where present.");
+      console.log("Open a new terminal before starting Raya again.");
+      return;
+    }
+
+    let config = loadConfig();
+    if (options.setup || options.github || options.local || !config.backup) {
+      const backup = await configureBackup({ github: options.github, local: options.local });
+      config = { ...config, backup };
+      if (options.setup) return;
+    }
+    if (!config.backup) throw new Error("Backups are not configured. Run: raya backup --setup");
+    const name = options.name?.trim() || options.local?.trim() || await askBackupName();
+    if (!name) throw new Error("Backup name cannot be empty.");
+    console.log(`Creating ${config.backup.mode === "github" ? "GitHub" : "local"} Raya backup...`);
+    const saved = await createBackup(config.backup, name, VERSION);
+    console.log(`Saved Raya backup: ${saved.name}`);
+    console.log(`Reference: ${saved.reference}`);
+    console.log(`Location: ${saved.directory}`);
+  });
+
+program
+  .command("uninstall")
+  .description("Remove the installed Raya package, local state, launchers, and backups.")
+  .option("--yes", "Skip the typed confirmation.")
+  .option("--keep-backups", "Preserve ~/raya-backups while removing Raya.")
+  .action(async (rawOptions: unknown) => {
+    const options = commandOptions<{ yes?: boolean; keepBackups?: boolean }>(rawOptions);
+    if (!options.yes) {
+      const rl = readline.createInterface({ input, output });
+      try {
+        console.log("Raya uninstall will remove:");
+        console.log("- global npm package @sdh4114/raya and installer-created Raya launchers");
+        console.log(`- all Raya state in ${RAYA_HOME}`);
+        if (!options.keepBackups) console.log(`- all Raya backups in ${RAYA_BACKUP_ROOT}`);
+        console.log("Developer source repositories, Node.js, and remote GitHub repositories will not be removed.");
+        const answer = await rl.question("Type UNINSTALL to continue: ");
+        if (!isUninstallApproved(answer)) {
+          console.log("Uninstall cancelled.");
+          return;
+        }
+      } finally {
+        rl.close();
+      }
+    }
+    const result = await uninstallRaya({ keepBackups: options.keepBackups });
+    console.log("Raya was uninstalled.");
+    for (const path of result.removed) console.log(`Removed: ${path}`);
+    for (const path of result.preserved) console.log(`Preserved: ${path}`);
+  });
 
 program
   .command("update")
@@ -700,6 +913,7 @@ program
     console.log(`mcp_enabled: ${enabledMcp.length ? enabledMcp.join(", ") : "(none)"}`);
     console.log(`skills: ${listAvailableSkills().length} loaded from ${RAYA_SKILLS_DIR}`);
     console.log(`commands: ${listCustomCommands().length} loaded from ${RAYA_COMMANDS_PATH}`);
+    console.log(`backup: ${config.backup ? `${config.backup.mode} (${backupTargetLabel(config.backup)})` : "not configured"}`);
     console.log(`logged_in: ${loggedIn}`);
   });
 
@@ -1107,6 +1321,7 @@ program
         console.log(`MCP servers   : ${enabledMcp.length ? enabledMcp.join(", ") : "None"}`);
         console.log(`Skills        : ${listAvailableSkills().length}`);
         console.log(`Commands      : ${listCustomCommands().length} (${RAYA_COMMANDS_PATH})`);
+        console.log(`Backup        : ${config.backup ? `${config.backup.mode} (${backupTargetLabel(config.backup)})` : "Not configured"}`);
         console.log(`Session   : ${session.name}`);
         console.log(`Config    : ${RAYA_CONFIG_PATH}`);
         console.log("Credentials: stored securely");
@@ -1293,7 +1508,7 @@ function commandNames(command: Command): string[] {
 }
 
 builtinCommandNames = new Set(program.commands.flatMap(commandNames));
-for (const custom of listCustomCommands()) {
+for (const custom of process.argv[2] === "uninstall" ? [] : listCustomCommands()) {
   if (builtinCommandNames.has(custom.name)) continue;
   program
     .command(custom.name)

@@ -14,7 +14,7 @@
 2. Prefer typed validation at external boundaries and explicit errors for invalid input.
 3. Keep Plan and Build capabilities separate.
 4. Route consequential writes through the approval policy.
-5. Keep secrets out of logs, config, skills, snapshots, and test fixtures.
+5. Keep secrets out of logs, config, skills, remote snapshots, and test fixtures. Local Raya backups may contain credentials by explicit design and must retain owner-only storage.
 6. Preserve old config and package behavior unless a migration is deliberate and tested.
 7. Avoid retry loops and repeated status output; aggregate recurring failures and retry with bounded backoff where appropriate.
 8. For TUI input, test raw bytes and parsed keypress events; terminal Escape and control chords can arrive through both paths.

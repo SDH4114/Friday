@@ -33,6 +33,7 @@ Raya is not one model. She is the orchestration layer around selectable model pr
 - `src/agent/capabilities.ts`: single catalog of built-in CLI commands, slash commands, tools, interfaces, persistence, safety boundaries, and installed personal commands.
 - `src/cli/`: commands, setup, config UX, and interface startup.
 - `src/commands/`: schema-validated user command persistence and direct process execution without shell interpolation.
+- `src/backup/`: local/GitHub snapshot creation, listing, package archives, and restore mechanics.
 - `src/config/`: schema, paths, secrets, migration, and durable settings.
 - `src/providers/`: model providers, authentication, discovery, and selection.
 - `src/tools/`: local tools and approval-aware actions.
@@ -60,6 +61,8 @@ Raya normally stores config, auth, sessions, memory, scheduled work, plugins, an
 
 `config.json` is non-secret configuration. `.env` is owner-only credential storage. `commands.json`, `sessions.json`, `web.json`, `scheduled.json`, `USER.md`, `MEMORY.md`, transcript Markdown, skills, plugins, `AGENTS.md`, and `SOUL.md` are separate stores with different lifetimes and ownership.
 
+Backup configuration is a typed `backup` object in `config.json`; the exact target is mirrored as `RAYA_BACKUP_TARGET` in `.env`. Each local version is a separate direct child of `~/raya-backups`, and that child directly contains code, `.raya`, manifest, and package archive. No date directory, snapshot wrapper, or local Git history is created. GitHub snapshots omit `.env` and `auth.json` and write only the remote repository's `.raya-backup` directory through temporary clones that are removed after every operation. Local discovery scans direct backup children; the configured GitHub repository is queried remotely. Previous `snapshots/<id>` and local-Git layouts remain readable and restorable.
+
 ## Extension Points
 
 - MCP servers add external tools, resources, and prompts through config.
@@ -80,3 +83,4 @@ When source behavior differs from the `raya` command, compare `command -v raya`,
 - Session saves are serialized where multiple interfaces may write.
 - Workspace writes remain under the resolved workspace even through symlinks.
 - Built-in assets may be bootstrapped, but user-customized files are preserved unless replacement was explicitly requested.
+- Backup restore and complete uninstall require typed confirmations. Uninstall removes installed/runtime Raya state and backups, but never guesses at or deletes unrelated source checkouts.

@@ -51,6 +51,14 @@ const McpServerSchema = z.preprocess((value) => {
   return raw;
 }, z.discriminatedUnion("transport", [McpStdioServerSchema, McpHttpServerSchema, McpSseServerSchema]));
 
+const BackupSchema = z.object({
+  mode: z.enum(["local", "github"]),
+  name: z.string().min(1).max(100),
+  directory: z.string().min(1).optional(),
+  repository: z.string().min(1).optional(),
+  configuredAt: z.string().datetime()
+});
+
 const ConfigSchema = z.object({
   provider: z.string().default("openai-codex"),
   model: z.string().default("gpt-5.4"),
@@ -65,6 +73,7 @@ const ConfigSchema = z.object({
   localModels: z.array(LocalModelSchema).default([]),
   piPackages: z.array(z.string().min(1)).default([]),
   mcpServers: z.record(z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/), McpServerSchema).default({}),
+  backup: BackupSchema.optional(),
   shellTimeoutMs: z.number().int().positive().default(120_000),
   webTimeoutMs: z.number().int().positive().default(15_000),
   webMaxChars: z.number().int().positive().default(12_000)
