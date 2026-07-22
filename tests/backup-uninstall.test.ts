@@ -75,8 +75,8 @@ test("local backups are sibling folders with files directly inside and restore f
   assert.match(listed, /GitHub backups\n\(none\)/);
   assert.match(listed, /Local backups/);
   assert.match(listed, /Backup name\s+Raya version\s+Created/);
-  assert.match(listed, /before-upgrade\s+v0\.1\.2/);
-  assert.match(listed, /after-upgrade\s+v0\.1\.2/);
+    assert.match(listed, /before-upgrade\s+v0\.1\.3/);
+    assert.match(listed, /after-upgrade\s+v0\.1\.3/);
   assert.match(listed, /Restore: raya backup --restore 'before-upgrade'/);
   assert.doesNotMatch(listed, /--from/);
 

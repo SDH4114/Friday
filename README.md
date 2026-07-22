@@ -50,6 +50,9 @@ raya gateway --start
 raya gateway --restart
 raya mcp list
 raya skills list
+raya profile list
+raya profile create coder --clone
+raya profile coder      # select coder; same as: raya profile use coder
 raya update            # check GitHub, then ask before updating Raya
 raya backup --setup    # choose GitHub or local backup storage
 raya backup            # save a named version after setup
@@ -72,7 +75,7 @@ raya config --theme ocean
 raya config --theme sunset
 ```
 
-The input prompt shows `[Plan]` or `[Build]`; the default Tab hotkey switches modes for the current session while preserving the input and cursor. Type `@` anywhere to open a searchable dropdown of workspace files and folders. Selecting an entry inserts `@file:"path"` or `@folder:"path"`; repeat `@` to attach any number of entries. Raya reads every attached file or lists every attached folder before answering. Generated and dependency trees (`.git`, `node_modules`, and `dist`) appear as selectable folders but are not recursively expanded in the dropdown. `Shift+Enter` creates a real new line in the input field, while Enter submits or selects. In multiline input, Up/Down move the cursor between lines and preserve its intended column. The editor supports Shift+arrows selection, Home/End, Ctrl/Option+Left/Right word movement, Ctrl/Cmd+A, Ctrl/Cmd+C/X/V, Ctrl+W, Ctrl+U/K/D, Option+Backspace/Delete, and Ctrl+Shift+K. `Ctrl+Backspace` and `Ctrl+Delete` deliberately remove the entire cursor line. Copy and paste use the native macOS, Windows, or Linux clipboard when available, with OSC 52 as a terminal fallback. Text is inserted atomically, so large and multiline pastes do not redraw once per character; real line breaks remain visible in the terminal and intact for the model. Pasted images become numbered `[Image 1]`, `[Image 2]`, … markers and are sent to the selected model as real image attachments. Pressing Backspace or Delete anywhere in an image marker removes the entire block and its image at once, then renumbers the remaining images. Regular terminal paste is also handled atomically through bracketed-paste mode. Modified-key input is decoded across macOS Terminal, iTerm2, Ghostty, Kitty/CSI-u, and Windows Terminal escape formats. Outside a menu, plain Up/Down arrows move through earlier submitted prompts when the current input is a single line and restore the unfinished draft at the newest position. Inside a `/` menu they move through choices. Plan exposes investigation-oriented tools; Build enables file and app changes, with an **Accept / Refuse** picker for consequential actions in Standard security. Start a line with `!` to run it directly in your terminal without sending it to Raya or saving it in the conversation. Type `/` elsewhere to open the command dropdown. Enter opens or selects, the cancel hotkey closes a menu or aborts an active run and rolls back unfinished messages, and the exit hotkey quits with `Bye bye`. In `/sessions`, `dd` requests deletion and then shows confirmation. A permanent footer shows context usage, the active model with its reasoning level such as `GPT-5.5 (medium)`, working directory, and Raya version. Changing `/thinking` updates this footer immediately.
+The input prompt shows `[Plan]` or `[Build]`; the default Tab hotkey switches modes for the current session while preserving the input and cursor. Type `@` anywhere to open a searchable dropdown of workspace files and folders. Selecting an entry inserts `@file:"path"` or `@folder:"path"`; repeat `@` to attach any number of entries. Raya reads every attached file or lists every attached folder before answering. Generated and dependency trees (`.git`, `node_modules`, and `dist`) appear as selectable folders but are not recursively expanded in the dropdown. `Shift+Enter` creates a real new line in the input field, while Enter submits or selects. In multiline input, Up/Down move the cursor between lines and preserve its intended column. The editor supports Shift+arrows selection, Home/End, Ctrl/Option+Left/Right word movement, Ctrl/Cmd+A, Ctrl/Cmd+C/X/V, Ctrl+W, Ctrl+U/K/D, Option+Backspace/Delete, and Ctrl+Shift+K. `Ctrl+Backspace` and `Ctrl+Delete` deliberately remove the entire cursor line. Copy and paste use the native macOS, Windows, or Linux clipboard when available, with OSC 52 as a terminal fallback. Text is inserted atomically, so large and multiline pastes do not redraw once per character; real line breaks remain visible in the terminal and intact for the model. Pasted images become numbered `[Image 1]`, `[Image 2]`, … markers and are sent to the selected model as real image attachments. Pressing Backspace or Delete anywhere in an image marker removes the entire block and its image at once, then renumbers the remaining images. Regular terminal paste is also handled atomically through bracketed-paste mode. Modified-key input is decoded across macOS Terminal, iTerm2, Ghostty, Kitty/CSI-u, and Windows Terminal escape formats. Outside a menu, plain Up/Down arrows move through earlier submitted prompts when the current input is a single line and restore the unfinished draft at the newest position. Inside a `/` menu they move through choices. Plan exposes investigation-oriented tools; Build enables file and app changes, with an **Accept / Refuse** picker for consequential actions in Standard security. Start a line with `!` to run it directly in your terminal without sending it to Raya or saving it in the conversation. Type `/` elsewhere to open the command dropdown. Enter opens or selects, the cancel hotkey closes a menu or aborts an active run and rolls back unfinished messages, and the exit hotkey quits with `Bye bye`. In `/sessions`, `dd` requests deletion and then shows confirmation. A permanent footer shows context usage, the active model with its reasoning level such as `GPT-5.5 (medium)`, active profile, working directory, and Raya version. Changing `/thinking` or `/profile` updates this state immediately.
 
 Core TUI hotkeys are configurable and shown with their active values on the startup dashboard and in `raya status`. Chords are case-insensitive and support `ctrl`, `meta` (Option on macOS), `shift`, named keys, letters, digits, and `F1`–`F12`. Bindings must be unique.
 
@@ -95,6 +98,7 @@ Useful interactive commands:
 /models
 /thinking
 /character
+/profile
 /theme
 /security
 /sessions
@@ -105,7 +109,7 @@ Useful interactive commands:
 /exit
 ```
 
-`/models` is a two-step picker: choose a model first, then Raya reads that model's provider metadata and shows only its supported reasoning levels. `/thinking` uses the same model-specific list. If a stored level is incompatible with a newly loaded model, Raya moves it to the nearest supported level instead of sending an invalid setting to the provider.
+`/models` is a two-step picker: choose a model first, then Raya reads that model's provider metadata and shows only its supported reasoning levels. `/thinking` uses the same model-specific list. If a stored level is incompatible with a newly loaded model, Raya moves it to the nearest supported level instead of sending an invalid setting to the provider. `/profile` opens the active profile list; selecting one rebuilds the agent with that profile's identity, instructions, memory, and clean session context.
 
 `/skills` opens a compact searchable dropdown of all built-in, user, workspace, and package skills. The list displays short stable rows like `/providers`, while searching still matches both the skill name and its complete description. Selecting one inserts a visible `@skill:<name>` marker into the current input instead of sending the command immediately. Open `/skills` again anywhere in that input to attach more skills; existing markers are preserved, for example `@skill:debugging @skill:implementation fix this failure`. Raya loads every selected skill with `use_skill` before answering. The information command is lowercase: `/about`.
 
@@ -188,26 +192,54 @@ Local providers are keyless by default, have zero API cost metadata, appear in `
 
 `raya login openai` enables the OpenAI API catalog, including `gpt-5.6` (the Sol alias), `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`. The OpenAI Codex OAuth provider also includes `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`; availability depends on your ChatGPT/Codex account. `raya login moonshotai` enables Moonshot AI, including `kimi-k3`. Choose any available model with `/models` or `raya config --provider <provider> --model <model>`. API-key billing belongs to the connected provider; Raya displays the current standard token-price metadata in its usage accounting.
 
-## AGENTS.md and SOUL.md
+## Profiles, AGENTS.md, SOUL.md, and MEMORY.md
 
-On every agent creation Raya first checks `~/.raya/AGENTS.md` and `~/.raya/SOUL.md`. For each file that is absent there, Raya walks upward from the current working directory and loads the nearest available copy:
+Raya profiles are managed personal agents inspired by the profile workflow in Hermes Agent. Each profile has its own directory:
 
-- `AGENTS.md` contains project instructions.
-- `SOUL.md` is your user-authored Raya personality: tone, style, and character.
+```text
+~/.raya/profiles/<name>/
+├── SOUL.md
+├── AGENTS.md
+├── MEMORY.md
+├── profile.json
+└── sessions/YYYY-MM-DD/<session-id>.md
+```
 
-`SOUL.md` is not a hidden system prompt; it is deliberately a file you own and may edit at any time. A fresh installation creates `~/.raya/SOUL.md` with Raya's complete calm, serious, kind default personality, but never overwrites an existing file. Use `/character` and choose `default` or another complete personality profile to intentionally replace it, or edit the file yourself for complete control.
+- `SOUL.md` defines that profile's identity, tone, style, and character.
+- `AGENTS.md` defines durable operating instructions and role-specific workflows.
+- `MEMORY.md` contains compact facts and lessons visible only to that profile.
+- sessions are filtered by both workspace and profile, so switching roles does not expose another profile's conversation history.
+
+The original root `SOUL.md`, `AGENTS.md`, and `MEMORY.md` are copied into the managed `default` profile on first use and left untouched as a recoverable migration source. `USER.md` remains global because every profile serves the same human. Provider credentials, model configuration, MCP servers, skills, direct commands, schedules, and themes are also shared; a profile changes Raya's role and continuity, not operating-system permissions or connection setup.
+
+```bash
+raya profile                         # active profile and list
+raya profile coder                   # select an existing profile
+raya profile use coder               # explicit equivalent
+raya profile create coder            # fresh identity, instructions, and memory
+raya profile create work --clone     # copy SOUL.md + AGENTS.md; start empty memory
+raya profile create twin --clone-all # also copy MEMORY.md
+raya profile create qa --clone --clone-from coder
+raya profile show coder
+raya profile rename coder engineer
+raya profile delete engineer         # typed confirmation; active/default cannot be deleted
+```
+
+Inside the TUI, `/profile` opens a searchable picker. `/profile create <name>` clones the active profile's `SOUL.md` and `AGENTS.md`, activates the new profile, and starts a clean session. `/character` now replaces only the active profile's `SOUL.md` and applies it immediately by rebuilding the agent.
+
+The active profile's `AGENTS.md` and `SOUL.md` are always loaded. Raya additionally walks upward from the current workspace and loads the nearest workspace `AGENTS.md` as project-specific context. Workspace `SOUL.md` no longer overrides profile identity, keeping profile behavior predictable.
 
 ## Sessions and long-term-memory foundation
 
-Structured session state is stored in `~/.raya/sessions.json`. Every save also creates a readable Markdown transcript under:
+Structured session state is stored in `~/.raya/sessions.json`. Every save also creates a profile-owned readable Markdown transcript under:
 
 ```text
-~/.raya/memory/sessions/YYYY-MM-DD/<session-id>.md
+~/.raya/profiles/<profile>/sessions/YYYY-MM-DD/<session-id>.md
 ```
 
-Every ordinary `raya` launch starts with a transient empty session bound to the directory where `raya` was opened. It is not written to disk until the first message is sent. At that point Raya stores the canonical workspace path and derives a readable session name from the first prompt instead of using a random identifier. `/sessions` only shows sessions belonging to the current directory, so similarly named projects cannot mix histories. Existing sessions created before workspace binding are migrated to the directory of the first Raya launch after upgrading. Every session preserves its own Plan/Build mode independently; opening another session restores that session's mode. The color theme remains global.
+Every ordinary `raya` launch starts with a transient empty session bound to the directory and active profile where `raya` was opened. It is not written to disk until the first message is sent. At that point Raya stores the canonical workspace path and derives a readable session name from the first prompt instead of using a random identifier. `/sessions` only shows sessions belonging to both the current directory and active profile, so projects and roles cannot mix histories. Existing sessions created before workspace/profile binding migrate to the `default` profile. Every session preserves its own Plan/Build mode independently; opening another session restores that session's mode. The color theme remains global.
 
-Raya can autonomously write compact durable facts to `USER.md` and `MEMORY.md` through her memory tool. `src/memory/skill.ts` remains an extension hook for optional post-session consolidation beyond the built-in model-driven behavior.
+Raya can autonomously write global user preferences to `USER.md` and profile-specific durable facts to the active profile's `MEMORY.md` through her memory tool. `src/memory/skill.ts` remains an extension hook for optional post-session consolidation beyond the built-in model-driven behavior.
 
 Set `RAYA_HOME=/path` to move config, OAuth credentials, sessions, and memory. Default model and mode are configured with `raya config --model <model> --mode plan|build`. OAuth credentials and Telegram tokens are stored with owner-only permissions in `~/.raya/.env`, separate from non-sensitive configuration.
 
@@ -257,7 +289,7 @@ raya skills sync       # install any missing built-in skills
 raya skills sync --force # replace installed built-ins with packaged versions
 ```
 
-At startup Raya prefers `~/.raya/AGENTS.md`; if it is absent, she walks upward from the current directory and loads the nearest `AGENTS.md`. `SOUL.md` follows the same independent fallback algorithm.
+At startup Raya loads the active profile's `SOUL.md` and `AGENTS.md`, then independently loads the nearest workspace `AGENTS.md`. This keeps profile identity stable while preserving repository-specific guidance.
 
 ## MCP servers
 
@@ -347,7 +379,7 @@ Skills shipped inside installed pi packages are loaded on the next session. Pack
 
 ## Persistent memory and scheduling
 
-Raya injects bounded frozen snapshots from `~/.raya/USER.md` (1,375 chars) and `~/.raya/MEMORY.md` (2,200 chars). Raya autonomously saves durable preferences, corrections, project decisions, and reusable lessons through the `memory` tool; writes are persisted immediately and appear in the next session's prompt. She can also list, search, and read saved sessions when earlier context is relevant.
+Raya injects bounded frozen snapshots from global `~/.raya/USER.md` (1,375 chars) and the active profile's `MEMORY.md` (2,200 chars). Raya autonomously saves durable preferences, corrections, project decisions, and reusable lessons through the `memory` tool; writes are persisted immediately and appear in the next session of that profile. She can also list, search, and read saved sessions from the active profile when earlier context is relevant.
 
 The `schedule` tool stores one-time and daily tasks in `~/.raya/scheduled.json`. Every scheduled task is delivered through Telegram; a failed or unavailable Telegram delivery leaves the task pending for retry. Reminders created in Raya Web are sent to Telegram and additionally shown as browser notifications. Restarting Raya reloads pending tasks from disk.
 
@@ -378,6 +410,7 @@ For a safer remote path, every dangerous tool action requested from Telegram—s
 - `src/mcp/client.ts` — MCP transports, capability discovery, tool adapters, resources, prompts, and lifecycle.
 - `src/skills/` and `builtin-skills/` — skill discovery and first-run built-in installation.
 - `src/commands/` — validated storage and shell-free execution for user-created direct commands.
+- `src/profiles/` — profile validation, migration, cloning, isolation, rename, and deletion.
 - `src/session/` and `src/memory/` — JSON session state, Markdown transcripts, and memory-skill hook.
 - `src/cli/index.ts` — command entry point and session lifecycle.
 

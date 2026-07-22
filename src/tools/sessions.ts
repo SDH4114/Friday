@@ -31,7 +31,7 @@ function sessionTranscript(session: RayaSession): string {
   return `# ${session.name}\n\nid: ${session.id}\nupdated: ${new Date(session.updatedAt).toISOString()}\nmodel: ${session.config.provider}/${session.config.model}\n\n${messages}`.slice(0, 24_000);
 }
 
-export function createSessionsTool(): RayaTool<typeof Parameters, { action: string; count?: number; id?: string }> {
+export function createSessionsTool(profile = "default"): RayaTool<typeof Parameters, { action: string; count?: number; id?: string }> {
   return {
     name: "sessions",
     label: "Sessions",
@@ -40,12 +40,12 @@ export function createSessionsTool(): RayaTool<typeof Parameters, { action: stri
     async execute(_toolCallId, params) {
       if (params.action === "read") {
         if (!params.id) throw new Error("id is required for read");
-        const session = findSession(params.id);
+        const session = findSession(params.id, process.cwd(), profile);
         if (!session) throw new Error(`Session not found: ${params.id}`);
         return { content: [{ type: "text", text: sessionTranscript(session) }], details: { action: "read", id: session.id } };
       }
 
-      const sessions = listSessions();
+      const sessions = listSessions(process.cwd(), profile);
       const limit = Math.max(1, Math.min(Math.floor(params.limit ?? 10), 20));
       if (params.action === "list") {
         const selected = sessions.slice(0, limit);

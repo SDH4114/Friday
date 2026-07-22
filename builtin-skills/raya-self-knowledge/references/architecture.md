@@ -9,7 +9,7 @@ Raya is not one model. She is the orchestration layer around selectable model pr
 ## Runtime Flow
 
 1. `src/cli/index.ts` parses built-in commands, registers validated user commands loaded by `src/commands/store.ts`, and starts the selected interface.
-2. `src/config/` resolves `~/.raya`, validates config, loads secrets separately, and bootstraps packaged assets.
+2. `src/config/` resolves `~/.raya`, validates config, loads secrets separately, and bootstraps packaged assets; `src/profiles/` resolves the active profile and migrates legacy root context into `default`.
 3. `src/providers/` authenticates providers and selects the model runtime.
 4. `src/mcp/` connects enabled MCP servers and exposes their tools, resources, and prompts.
 5. `src/agent/create-agent.ts` assembles the agent, system prompt, built-in tools, and MCP tools.
@@ -23,7 +23,7 @@ Raya is not one model. She is the orchestration layer around selectable model pr
 - Config owns validation and backward-compatible migration. Callers should use `normalizeConfig`, `loadConfig`, or `updateConfig`, not trust stored JSON.
 - Agent assembly is the only place that should combine the system prompt, default tools, MCP tools, and subagent tool.
 - Tools own capability-specific validation and approval metadata; interfaces own how approval is collected.
-- Session storage owns message history and workspace binding. Memory owns durable cross-session facts. Do not use one as a silent replacement for the other.
+- Profile storage owns named SOUL.md, AGENTS.md, MEMORY.md, migration, cloning, and lifecycle. Session storage owns message history plus workspace/profile binding. Memory owns global USER.md and active-profile facts. Do not use one as a silent replacement for another.
 - MCP runtime owns external server connections and must close every client it successfully opened, including partial strict-mode failures.
 - Built-in skills are packaged source assets. Installed skill folders are user-owned and are not silently overwritten.
 
@@ -36,6 +36,7 @@ Raya is not one model. She is the orchestration layer around selectable model pr
 - `src/backup/`: local/GitHub snapshot creation, listing, package archives, and restore mechanics.
 - `src/config/`: schema, paths, secrets, migration, and durable settings.
 - `src/providers/`: model providers, authentication, discovery, and selection.
+- `src/profiles/`: named profile validation, migration, cloning, lifecycle, and file paths.
 - `src/tools/`: local tools and approval-aware actions.
 - `src/mcp/`: Model Context Protocol clients, lifecycle, safety, and status.
 - `src/skills/`: packaged-skill installation and progressive skill discovery.
@@ -59,7 +60,7 @@ Important entrypoints include `src/cli/index.ts`, `src/agent/create-agent.ts`, `
 
 Raya normally stores config, auth, sessions, memory, scheduled work, plugins, and skills under `~/.raya`. Tests and smoke checks should set `RAYA_HOME` to an isolated temporary directory.
 
-`config.json` is non-secret configuration. `.env` is owner-only credential storage. `commands.json`, `sessions.json`, `web.json`, `scheduled.json`, `USER.md`, `MEMORY.md`, transcript Markdown, skills, plugins, `AGENTS.md`, and `SOUL.md` are separate stores with different lifetimes and ownership.
+`config.json` is non-secret configuration and stores `activeProfile`. `.env` is owner-only credential storage. `commands.json`, `sessions.json`, `web.json`, `scheduled.json`, global `USER.md`, skills, and plugins are shared. Every `profiles/<name>/` owns `SOUL.md`, `AGENTS.md`, `MEMORY.md`, metadata, and readable transcripts.
 
 Backup configuration is a typed `backup` object in `config.json`; the exact target is mirrored as `RAYA_BACKUP_TARGET` in `.env`. Each local version is a separate direct child of `~/raya-backups`, and that child directly contains code, `.raya`, manifest, and package archive. No date directory, snapshot wrapper, or local Git history is created. GitHub snapshots omit `.env` and `auth.json` and write only the remote repository's `.raya-backup` directory through temporary clones that are removed after every operation. Local discovery scans direct backup children; the configured GitHub repository is queried remotely. Previous `snapshots/<id>` and local-Git layouts remain readable and restorable.
 
@@ -69,7 +70,7 @@ Backup configuration is a typed `backup` object in `config.json`; the exact targ
 - Skills add reusable instructions under `~/.raya/skills/<name>/SKILL.md`.
 - User commands add direct `raya <name> [args...]` process shortcuts through `raya commands add`; they do not add agent capabilities or bypass operating-system permissions.
 - Pi packages can contribute provider or skill capabilities.
-- Workspace `AGENTS.md` and `SOUL.md` specialize behavior for a project or user.
+- Profiles specialize durable identity, instructions, memory, and sessions. The nearest workspace `AGENTS.md` adds project-specific instructions; workspace `SOUL.md` does not replace profile identity.
 
 ## Source Versus Installed Raya
 
@@ -81,6 +82,7 @@ When source behavior differs from the `raya` command, compare `command -v raya`,
 - A failed optional MCP server is reported once and does not prevent other servers from working.
 - A cancelled prompt rolls unfinished agent messages back before the next prompt.
 - Session saves are serialized where multiple interfaces may write.
+- Profile switches rebuild the agent and never reuse another profile's conversation messages.
 - Workspace writes remain under the resolved workspace even through symlinks.
 - Built-in assets may be bootstrapped, but user-customized files are preserved unless replacement was explicitly requested.
 - Backup restore and complete uninstall require typed confirmations. Uninstall removes installed/runtime Raya state and backups, but never guesses at or deletes unrelated source checkouts.

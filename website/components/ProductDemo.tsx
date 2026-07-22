@@ -30,7 +30,7 @@ export function ProductDemo() {
         <p className="demo-speaker">Raya</p>
         <div className="demo-lines">{active.lines.map((line, index) => <p key={line}><span>{String(index + 1).padStart(2, "0")}</span>{line}</p>)}</div>
       </div>
-      <div className="product-demo__status"><span>{active.status}</span><span>GPT-5.4 (medium) · v0.1.2</span></div>
+      <div className="product-demo__status"><span>{active.status}</span><span>GPT-5.4 (medium) · v0.1.3</span></div>
     </div>
   );
 }

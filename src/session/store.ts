@@ -6,6 +6,7 @@ import { ensureRayaHome, RAYA_MEMORY_DIR, RAYA_SESSIONS_PATH } from "../config/p
 import { normalizeConfig, type RayaConfig } from "../config/config.js";
 import { memorySkillHook } from "../memory/skill.js";
 import { writePrivateFileAtomic } from "../storage/atomic-file.js";
+import { DEFAULT_PROFILE, profilePaths } from "../profiles/store.js";
 
 export type RayaSession = {
   id: string;
@@ -15,6 +16,7 @@ export type RayaSession = {
   config: RayaConfig;
   messages: AgentMessage[];
   workspace: string;
+  profile: string;
   autoNamed?: boolean;
 };
 
@@ -31,6 +33,7 @@ const StoredSessionSchema = z.object({
   config: z.unknown(),
   messages: z.array(z.unknown()),
   workspace: z.string().min(1).optional(),
+  profile: z.string().optional(),
   autoNamed: z.boolean().optional()
 });
 
@@ -51,16 +54,20 @@ function readSessionFile(): SessionFile {
   }
   const parsed = SessionFileSchema.parse(JSON.parse(readFileSync(RAYA_SESSIONS_PATH, "utf8")));
   const migratedWorkspace = normalizeWorkspace();
-  const migrated = parsed.sessions.some((session) => !session.workspace);
+  const migrated = parsed.sessions.some((session) => !session.workspace || !session.profile);
   const file: SessionFile = {
     ...(parsed.activeSessionId ? { activeSessionId: parsed.activeSessionId } : {}),
-    sessions: parsed.sessions.map((session) => ({
-      ...session,
-      config: normalizeConfig(session.config),
-      messages: session.messages as AgentMessage[],
-      workspace: normalizeWorkspace(session.workspace ?? migratedWorkspace),
-      autoNamed: session.autoNamed ?? true
-    }))
+    sessions: parsed.sessions.map((session) => {
+      const config = normalizeConfig(session.config);
+      return {
+        ...session,
+        config,
+        messages: session.messages as AgentMessage[],
+        workspace: normalizeWorkspace(session.workspace ?? migratedWorkspace),
+        profile: session.profile ?? config.activeProfile ?? DEFAULT_PROFILE,
+        autoNamed: session.autoNamed ?? true
+      };
+    })
   };
   if (migrated) writeSessionFile(file);
   return file;
@@ -74,12 +81,12 @@ function writeSessionFile(file: SessionFile): void {
 function markdownTranscript(session: RayaSession): string {
   const when = new Date(session.updatedAt).toISOString();
   const messages = session.messages.map((message) => `\n## ${message.role}\n\n\`\`\`json\n${JSON.stringify(message, null, 2)}\n\`\`\``).join("\n");
-  return `# Raya session: ${session.name}\n\n- id: ${session.id}\n- workspace: ${session.workspace}\n- created: ${new Date(session.createdAt).toISOString()}\n- updated: ${when}\n- model: ${session.config.provider}/${session.config.model}\n- mode: ${session.config.mode}\n${messages}\n`;
+  return `# Raya session: ${session.name}\n\n- id: ${session.id}\n- profile: ${session.profile}\n- workspace: ${session.workspace}\n- created: ${new Date(session.createdAt).toISOString()}\n- updated: ${when}\n- model: ${session.config.provider}/${session.config.model}\n- mode: ${session.config.mode}\n${messages}\n`;
 }
 
 function persistReadableTranscript(session: RayaSession): void {
   const day = new Date(session.updatedAt).toISOString().slice(0, 10);
-  const directory = `${RAYA_MEMORY_DIR}/sessions/${day}`;
+  const directory = `${profilePaths(session.profile).sessions}/${day}`;
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   writePrivateFileAtomic(`${directory}/${session.id}.md`, markdownTranscript(session));
   void memorySkillHook?.onSessionSaved(session);
@@ -88,7 +95,7 @@ function persistReadableTranscript(session: RayaSession): void {
 export function getOrCreateActiveSession(config: RayaConfig, workspace = process.cwd()): RayaSession {
   const file = readSessionFile();
   const normalized = normalizeWorkspace(workspace);
-  const active = file.sessions.find((session) => session.id === file.activeSessionId && session.workspace === normalized);
+  const active = file.sessions.find((session) => session.id === file.activeSessionId && session.workspace === normalized && session.profile === config.activeProfile);
   if (active) {
     return active;
   }
@@ -96,36 +103,37 @@ export function getOrCreateActiveSession(config: RayaConfig, workspace = process
   return createSession(config, undefined, normalized);
 }
 
-export function listSessions(workspace = process.cwd()): RayaSession[] {
+export function listSessions(workspace = process.cwd(), profile = DEFAULT_PROFILE): RayaSession[] {
   const normalized = normalizeWorkspace(workspace);
-  return readSessionFile().sessions.filter((session) => session.workspace === normalized).sort((a, b) => b.updatedAt - a.updatedAt);
+  return readSessionFile().sessions.filter((session) => session.workspace === normalized && session.profile === profile).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-export function findSession(idOrName: string, workspace = process.cwd()): RayaSession | undefined {
+export function findSession(idOrName: string, workspace = process.cwd(), profile = DEFAULT_PROFILE): RayaSession | undefined {
   const normalized = normalizeWorkspace(workspace);
-  return readSessionFile().sessions.find((item) => item.workspace === normalized && (item.id === idOrName || item.name === idOrName));
+  return readSessionFile().sessions.find((item) => item.workspace === normalized && item.profile === profile && (item.id === idOrName || item.name === idOrName));
 }
 
-function deleteReadableTranscripts(sessionId: string): void {
-  const root = `${RAYA_MEMORY_DIR}/sessions`;
-  if (!existsSync(root)) return;
-  for (const day of readdirSync(root, { withFileTypes: true })) {
-    if (!day.isDirectory()) continue;
-    const transcript = `${root}/${day.name}/${sessionId}.md`;
-    if (existsSync(transcript)) unlinkSync(transcript);
+function deleteReadableTranscripts(sessionId: string, profile: string): void {
+  for (const root of [profilePaths(profile).sessions, `${RAYA_MEMORY_DIR}/sessions`]) {
+    if (!existsSync(root)) continue;
+    for (const day of readdirSync(root, { withFileTypes: true })) {
+      if (!day.isDirectory()) continue;
+      const transcript = `${root}/${day.name}/${sessionId}.md`;
+      if (existsSync(transcript)) unlinkSync(transcript);
+    }
   }
 }
 
-export function deleteSession(idOrName: string, workspace = process.cwd()): RayaSession {
+export function deleteSession(idOrName: string, workspace = process.cwd(), profile = DEFAULT_PROFILE): RayaSession {
   const file = readSessionFile();
   const normalized = normalizeWorkspace(workspace);
-  const index = file.sessions.findIndex((item) => item.workspace === normalized && (item.id === idOrName || item.name === idOrName));
+  const index = file.sessions.findIndex((item) => item.workspace === normalized && item.profile === profile && (item.id === idOrName || item.name === idOrName));
   if (index < 0) throw new Error(`Session not found: ${idOrName}`);
   const [deleted] = file.sessions.splice(index, 1);
   if (!deleted) throw new Error(`Session not found: ${idOrName}`);
-  if (file.activeSessionId === deleted.id) file.activeSessionId = file.sessions[0]?.id;
+  if (file.activeSessionId === deleted.id) file.activeSessionId = file.sessions.find((item) => item.profile === profile)?.id;
   writeSessionFile(file);
-  deleteReadableTranscripts(deleted.id);
+  deleteReadableTranscripts(deleted.id, deleted.profile);
   return deleted;
 }
 
@@ -169,6 +177,7 @@ export function createSession(config: RayaConfig, name?: string, workspace = pro
     config,
     messages: [],
     workspace: normalizeWorkspace(workspace),
+    profile: config.activeProfile,
     autoNamed: Boolean(name?.trim())
   };
   return session;
@@ -187,14 +196,39 @@ function sessionNameFromFirstPrompt(session: RayaSession): string {
   return shortened.charAt(0).toUpperCase() + shortened.slice(1);
 }
 
-export function switchSession(idOrName: string, workspace = process.cwd()): RayaSession {
+export function switchSession(idOrName: string, workspace = process.cwd(), profile = DEFAULT_PROFILE): RayaSession {
   const file = readSessionFile();
   const normalized = normalizeWorkspace(workspace);
-  const session = file.sessions.find((item) => item.workspace === normalized && (item.id === idOrName || item.name === idOrName));
+  const session = file.sessions.find((item) => item.workspace === normalized && item.profile === profile && (item.id === idOrName || item.name === idOrName));
   if (!session) {
     throw new Error(`Session not found: ${idOrName}`);
   }
   file.activeSessionId = session.id;
   writeSessionFile(file);
   return session;
+}
+
+export function renameSessionProfile(currentProfile: string, nextProfile: string): number {
+  const file = readSessionFile();
+  let changed = 0;
+  for (const session of file.sessions) {
+    if (session.profile !== currentProfile) continue;
+    session.profile = nextProfile;
+    session.config = { ...session.config, activeProfile: nextProfile };
+    changed += 1;
+  }
+  if (changed) writeSessionFile(file);
+  return changed;
+}
+
+export function deleteSessionsForProfile(profile: string): number {
+  const file = readSessionFile();
+  const removed = file.sessions.filter((session) => session.profile === profile);
+  if (!removed.length) return 0;
+  file.sessions = file.sessions.filter((session) => session.profile !== profile);
+  if (removed.some((session) => session.id === file.activeSessionId)) {
+    file.activeSessionId = file.sessions[0]?.id;
+  }
+  writeSessionFile(file);
+  return removed.length;
 }

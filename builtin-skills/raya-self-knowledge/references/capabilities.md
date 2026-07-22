@@ -4,9 +4,10 @@
 
 ## Interfaces
 
-- Interactive TUI: streaming chat, Plan/Build switching, configurable core hotkeys, slash menus, prompt history, direct terminal lines, themes, and sessions. The footer shows the active model and reasoning level. `/skills` attaches a selected skill to the current message as `@skill:<name>`, and `/about` is lowercase.
+- Interactive TUI: streaming chat, Plan/Build switching, configurable core hotkeys, slash menus, prompt history, direct terminal lines, themes, profiles, and sessions. The footer shows the active model, reasoning level, and profile. `/profile` creates or switches isolated roles, `/skills` attaches a selected skill to the current message as `@skill:<name>`, and `/about` is lowercase.
 - One-shot CLI: run one prompt with the configured provider and tools.
 - Direct CLI commands: built-ins such as `raya git` and `raya open`, plus user-created shortcuts managed with `raya commands add|list|show|remove`. Extra invocation arguments are appended to the saved argument vector.
+- Profiles: `raya profile <name>` selects an existing profile; `list`, `use`, `create`, `show`, `rename`, and confirmation-gated `delete` manage profile directories. `--clone` copies identity/instructions and `--clone-all` also copies memory.
 - Updates: `raya update` reads the current commit from the official GitHub branch, reads that commit's version directly, compares it with the local version, and runs that same commit's official installer only after an explicit `y` or `yes` confirmation.
 - Backups: `raya backup --setup` chooses local or GitHub storage, plain `raya backup` creates a named version, and `--list` prints separate GitHub/Local tables with names, Raya versions, dates, and restore commands. Restore always asks which source to use, then reinstalls the archived package and state after `RESTORE` confirmation. Every local version is a sibling `~/raya-backups/<name>/` folder with code, `.raya`, manifest, and package archive directly inside; no date, snapshot, wrapper, or Git directory is added. Previous nested local snapshots remain compatible. GitHub operations use throwaway clones and keep no persistent local copy. `--local <name>` configures local mode and creates that named backup; `--github` provides explicit repository setup; `bakcup` is a typo-compatible alias. Read [backups.md](backups.md) for the complete storage and lifecycle contract.
 - Uninstall: `raya uninstall` removes the global package, exact Raya launchers, `RAYA_HOME`, and normally `~/raya-backups` only after `UNINSTALL`; `--keep-backups` preserves local backup history. It never deletes a remote GitHub repository.
@@ -21,7 +22,7 @@
 - Approval-aware shell execution with blocked-command checks and bounded output.
 - Public web text search and fetch with private/local network protection.
 - Application open/close control where the operating system supports it.
-- Session discovery, durable memory writes, scheduling, skill loading, and Build-only skill authoring.
+- Profile-scoped session discovery, global USER.md and profile MEMORY.md writes, scheduling, skill loading, and Build-only skill authoring.
 
 The authoritative list is `createDefaultTools` in `src/tools/index.ts`; mode and platform can change which tools are present.
 

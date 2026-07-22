@@ -211,7 +211,7 @@ export async function runWebServer(options: WebServerOptions): Promise<void> {
         sendJson(response, 200, {
           web: loadWebData(),
           scheduled: listScheduled(),
-          sessions: listSessions().map(({ id, name, updatedAt }) => ({ id, name, updatedAt })),
+          sessions: listSessions(process.cwd(), config.activeProfile).map(({ id, name, updatedAt }) => ({ id, name, updatedAt })),
           messages: transcript(session.messages),
           activeSessionId: session.id,
           contextTokens,
@@ -267,7 +267,7 @@ export async function runWebServer(options: WebServerOptions): Promise<void> {
 
       if (request.method === "POST" && url.pathname === "/api/sessions/open") {
         const body = await readJson(request);
-        session = switchSession(text(body.id, "id"));
+        session = switchSession(text(body.id, "id"), process.cwd(), config.activeProfile);
         config = session.config;
         sendJson(response, 200, { id: session.id, messages: transcript(session.messages) });
         return;

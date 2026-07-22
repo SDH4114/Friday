@@ -4,6 +4,7 @@ import { ensureRayaHome, RAYA_CONFIG_PATH } from "./paths.js";
 import { writePrivateFileAtomic } from "../storage/atomic-file.js";
 import { ensureBuiltinSkills } from "../skills/bootstrap.js";
 import { DEFAULT_HOTKEYS, HotkeysSchema } from "../tui/hotkeys.js";
+import { DEFAULT_PROFILE, ensureProfile, PROFILE_NAME_PATTERN } from "../profiles/store.js";
 
 const LocalModelSchema = z.object({
   provider: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/),
@@ -60,6 +61,7 @@ const BackupSchema = z.object({
 });
 
 const ConfigSchema = z.object({
+  activeProfile: z.string().regex(PROFILE_NAME_PATTERN).default(DEFAULT_PROFILE),
   provider: z.string().default("openai-codex"),
   model: z.string().default("gpt-5.4"),
   mode: z.enum(["plan", "build"]).default("plan"),
@@ -97,11 +99,11 @@ export function loadConfig(): RayaConfig {
   ensureRayaHome();
   ensureBuiltinSkills();
 
-  if (!existsSync(RAYA_CONFIG_PATH)) {
-    return ConfigSchema.parse(defaultConfig);
-  }
-
-  return normalizeConfig(JSON.parse(readFileSync(RAYA_CONFIG_PATH, "utf8")));
+  const config = !existsSync(RAYA_CONFIG_PATH)
+    ? ConfigSchema.parse(defaultConfig)
+    : normalizeConfig(JSON.parse(readFileSync(RAYA_CONFIG_PATH, "utf8")));
+  ensureProfile(config.activeProfile);
+  return config;
 }
 
 export function saveConfig(config: RayaConfig): void {

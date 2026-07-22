@@ -13,6 +13,7 @@ export const RAYA_MEMORY_DIR = join(RAYA_HOME, "memory");
 export const RAYA_USER_MEMORY_PATH = join(RAYA_HOME, "USER.md");
 export const RAYA_MEMORY_PATH = join(RAYA_HOME, "MEMORY.md");
 export const RAYA_SOUL_PATH = join(RAYA_HOME, "SOUL.md");
+export const RAYA_PROFILES_DIR = join(RAYA_HOME, "profiles");
 export const RAYA_SCHEDULE_PATH = join(RAYA_HOME, "scheduled.json");
 export const RAYA_WEB_PATH = join(RAYA_HOME, "web.json");
 export const RAYA_PLUGINS_DIR = join(RAYA_HOME, "plugins");

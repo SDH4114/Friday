@@ -26,9 +26,10 @@ export const docsNavigation: DocGroup[] = [
     items: [
       { title: "MCP", href: "/docs/mcp", description: "Connect stdio, HTTP, and SSE servers." },
       { title: "Skills", href: "/docs/skills", description: "Reusable instructions and skill authoring." },
+      { title: "Profiles", href: "/docs/profiles", description: "Isolated identity, instructions, memory, and sessions." },
       { title: "Sessions", href: "/docs/sessions", description: "Workspace-bound conversation state." },
       { title: "Memory", href: "/docs/memory", description: "Durable USER.md and MEMORY.md facts." },
-      { title: "AGENTS.md and SOUL.md", href: "/docs/context-files", description: "Project rules and user-owned character." }
+      { title: "AGENTS.md and SOUL.md", href: "/docs/context-files", description: "Profile identity and project rules." }
     ]
   },
   {

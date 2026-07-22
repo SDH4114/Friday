@@ -6,7 +6,7 @@ import type { Model } from "@earendil-works/pi-ai";
 import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { loadConfig, normalizeConfig, updateConfig, type RayaConfig } from "../config/config.js";
-import { RAYA_COMMANDS_PATH, RAYA_CONFIG_PATH, RAYA_HOME, RAYA_SKILLS_DIR, RAYA_SOUL_PATH } from "../config/paths.js";
+import { RAYA_COMMANDS_PATH, RAYA_CONFIG_PATH, RAYA_HOME, RAYA_SKILLS_DIR } from "../config/paths.js";
 import { readSecret, writeSecret } from "../config/secrets.js";
 import {
   createProviderRuntime,
@@ -63,14 +63,24 @@ import {
 } from "../commands/store.js";
 import {
   createSession,
+  deleteSessionsForProfile,
   deleteSession,
   findSession,
   getOrCreateActiveSession,
   listSessions,
   saveSession,
+  renameSessionProfile,
   switchSession,
   type RayaSession
 } from "../session/store.js";
+import {
+  createProfile,
+  deleteProfile,
+  ensureProfile,
+  listProfiles,
+  profilePaths,
+  renameProfile
+} from "../profiles/store.js";
 
 const program = new Command();
 const defaultHelp = new Help();
@@ -80,7 +90,7 @@ program.configureHelp({
     return command.name() === "web" ? term.replace(/^web\b/, "web (demo)") : term;
   }
 });
-const VERSION = "0.1.2";
+const VERSION = "0.1.3";
 let builtinCommandNames = new Set<string>();
 setActiveTheme(process.argv[2] === "uninstall" ? "ocean" : loadConfig().theme);
 
@@ -373,11 +383,107 @@ Examples and direct commands:
   raya uninstall               Remove Raya, ~/.raya, and Raya backups
   raya mcp list                Show configured MCP servers
   raya skills list             Show available built-in and user skills
+  raya profile coder          Switch the active profile
+  raya profile create work --clone
+                               Create a profile from the active identity
   raya commands add serve -- npm run dev
                                Create a direct command, then run raya serve
   raya local add <model>       Add an Ollama/local OpenAI-compatible model
   raya "explain this repo"     Run a one-shot prompt
 `);
+
+function printProfiles(activeProfile = loadConfig().activeProfile): void {
+  console.log(`Active profile: ${activeProfile}`);
+  for (const item of listProfiles()) {
+    console.log(`${item.name === activeProfile ? "*" : " "} ${item.name}\t${item.path}`);
+  }
+}
+
+function useProfile(name: string): string {
+  ensureProfile(name);
+  const normalized = name.trim().toLowerCase();
+  updateConfig({ activeProfile: normalized });
+  return normalized;
+}
+
+program
+  .command("profile")
+  .argument("[action]", "profile name, or list, use, create, show, rename, delete", "list")
+  .argument("[name]", "profile name")
+  .argument("[nextName]", "new name when renaming")
+  .description("Manage isolated Raya identity, instructions, memory, and sessions.")
+  .option("--clone", "Copy SOUL.md and AGENTS.md from the active or selected source profile.")
+  .option("--clone-all", "Copy SOUL.md, AGENTS.md, and MEMORY.md from the source profile.")
+  .option("--clone-from <profile>", "Clone from this profile instead of the active profile.")
+  .option("-y, --yes", "Delete without typed confirmation.")
+  .action(async (action: string, name: string | undefined, nextName: string | undefined, rawOptions: unknown) => {
+    const options = commandOptions<{ clone?: boolean; cloneAll?: boolean; cloneFrom?: string; yes?: boolean }>(rawOptions);
+    const config = loadConfig();
+    if (action === "list") {
+      printProfiles(config.activeProfile);
+      return;
+    }
+    if (action === "create") {
+      if (!name) throw new Error("Usage: raya profile create <name> [--clone|--clone-all]");
+      const paths = createProfile(name, {
+        clone: options.clone,
+        cloneAll: options.cloneAll,
+        ...((options.clone || options.cloneAll) ? { cloneFrom: options.cloneFrom ?? config.activeProfile } : {})
+      });
+      console.log(color(`Created profile: ${name.toLowerCase()}`, theme.green));
+      console.log(`Path: ${paths.directory}`);
+      console.log(`Switch with: raya profile ${name.toLowerCase()}`);
+      return;
+    }
+    if (action === "show") {
+      const requested = name ?? config.activeProfile;
+      const profile = listProfiles().find((item) => item.name === requested.toLowerCase());
+      if (!profile) throw new Error(`Profile does not exist: ${requested}`);
+      console.log(`Profile:  ${profile.name}${profile.name === config.activeProfile ? " (active)" : ""}`);
+      console.log(`Path:     ${profile.path}`);
+      console.log(`SOUL.md:  ${profile.soulBytes} bytes`);
+      console.log(`AGENTS.md: ${profile.agentsBytes} bytes`);
+      console.log(`MEMORY.md: ${profile.memoryBytes} bytes`);
+      if (profile.createdAt) console.log(`Created:  ${profile.createdAt}`);
+      if (profile.clonedFrom) console.log(`Source:   ${profile.clonedFrom}`);
+      return;
+    }
+    if (action === "rename") {
+      if (!name || !nextName) throw new Error("Usage: raya profile rename <current> <new>");
+      renameProfile(name, nextName);
+      renameSessionProfile(name.toLowerCase(), nextName.toLowerCase());
+      if (config.activeProfile === name.toLowerCase()) updateConfig({ activeProfile: nextName.toLowerCase() });
+      console.log(color(`Renamed profile ${name.toLowerCase()} to ${nextName.toLowerCase()}.`, theme.green));
+      return;
+    }
+    if (action === "delete" || action === "remove") {
+      if (!name) throw new Error("Usage: raya profile delete <name>");
+      if (config.activeProfile === name.toLowerCase()) throw new Error("Switch to another profile before deleting the active profile.");
+      if (!options.yes) {
+        const paths = profilePaths(name);
+        const rl = readline.createInterface({ input, output });
+        try {
+          console.log(`This will permanently remove ${paths.directory}, including its SOUL.md, AGENTS.md, MEMORY.md, and all profile-bound session records and transcripts.`);
+          const answer = await rl.question(`Type DELETE ${name.toLowerCase()} to continue: `);
+          if (answer.trim() !== `DELETE ${name.toLowerCase()}`) {
+            console.log("Profile deletion cancelled.");
+            return;
+          }
+        } finally {
+          rl.close();
+        }
+      }
+      deleteProfile(name);
+      deleteSessionsForProfile(name.toLowerCase());
+      console.log(color(`Deleted profile: ${name.toLowerCase()}`, theme.green));
+      return;
+    }
+    const requested = action === "use" ? name : action;
+    if (!requested) throw new Error("Usage: raya profile <name>");
+    const selected = useProfile(requested);
+    console.log(color(`Active profile: ${selected}`, theme.green));
+    console.log(`Profile files: ${profilePaths(selected).directory}`);
+  });
 
 function backupTargetLabel(backup: NonNullable<RayaConfig["backup"]>): string {
   return backup.repository ?? backup.directory ?? RAYA_BACKUP_ROOT;
@@ -901,6 +1007,8 @@ program
     const loggedIn = await isProviderConfigured(runtime, config.provider, config.model);
 
     console.log(`config: ${RAYA_CONFIG_PATH}`);
+    console.log(`profile: ${config.activeProfile}`);
+    console.log(`profile_path: ${profilePaths(config.activeProfile).directory}`);
     console.log("credentials: stored securely");
     console.log(`provider: ${config.provider}`);
     console.log(`model: ${config.model}`);
@@ -1231,9 +1339,64 @@ program
           console.log("Use /character and choose a personality from the dropdown.");
           return;
         }
-        writeFileSync(RAYA_SOUL_PATH, profile.soul ? `${profile.soul.trimEnd()}\n` : "", { mode: 0o600 });
+        writeFileSync(profilePaths(config.activeProfile).soul, profile.soul ? `${profile.soul.trimEnd()}\n` : "", { mode: 0o600 });
         console.log(color(`Character: ${profile.label}`, theme.green));
-        return;
+        return rebuildAgent(session);
+      }
+
+      if (name === "profile") {
+        const action = args[0];
+        if (!action) {
+          printProfiles(config.activeProfile);
+          return;
+        }
+        if (action === "create") {
+          const requested = args[1];
+          if (!requested) throw new Error("Usage: /profile create <name>");
+          persist(activeAgent);
+          createProfile(requested, { clone: true, cloneFrom: config.activeProfile });
+          const selected = useProfile(requested);
+          config = { ...config, activeProfile: selected };
+          const next = createSession(config);
+          console.log(color(`Created and activated profile: ${selected}`, theme.green));
+          console.log(`Files: ${profilePaths(selected).directory}`);
+          return rebuildAgent(next);
+        }
+        if (action === "delete" || action === "remove") {
+          const requested = args[1];
+          if (!requested) throw new Error("Usage: /profile delete <name>");
+          if (requested.toLowerCase() === config.activeProfile) throw new Error("Switch to another profile before deleting the active profile.");
+          try {
+            await requestTerminalApproval("Delete profile", `${requested} and its profile files`);
+          } catch (error) {
+            if (error instanceof Error && error.message === "Action refused by user.") {
+              console.log(color("Profile deletion cancelled.", theme.gray));
+              return;
+            }
+            throw error;
+          }
+          deleteProfile(requested);
+          deleteSessionsForProfile(requested.toLowerCase());
+          console.log(color(`Deleted profile: ${requested.toLowerCase()}`, theme.green));
+          return;
+        }
+        if (action === "show") {
+          const requested = args[1] ?? config.activeProfile;
+          const selected = listProfiles().find((item) => item.name === requested.toLowerCase());
+          if (!selected) throw new Error(`Profile does not exist: ${requested}`);
+          console.log(`Profile: ${selected.name}${selected.name === config.activeProfile ? " (active)" : ""}`);
+          console.log(`Path: ${selected.path}`);
+          console.log(`SOUL.md: ${selected.soulBytes} bytes · AGENTS.md: ${selected.agentsBytes} bytes · MEMORY.md: ${selected.memoryBytes} bytes`);
+          return;
+        }
+        const requested = action === "use" ? args[1] : action;
+        if (!requested) throw new Error("Use /profile and choose a profile.");
+        persist(activeAgent);
+        const selected = useProfile(requested);
+        config = { ...config, activeProfile: selected };
+        const next = createSession(config);
+        console.log(color(`Active profile: ${selected}`, theme.green));
+        return rebuildAgent(next);
       }
 
       if (name === "theme") {
@@ -1277,7 +1440,7 @@ program
           const target = args[1];
           if (!target) throw new Error("Choose a session from the /sessions menu.");
           persist(activeAgent);
-          const next = switchSession(target);
+          const next = switchSession(target, process.cwd(), config.activeProfile);
           const nextAgent = rebuildAgent(next);
           renderRestoredSession(next);
           return nextAgent;
@@ -1285,7 +1448,7 @@ program
         if (action === "delete") {
           const target = args[1];
           if (!target) throw new Error("Choose a session to delete from the /sessions menu.");
-          const selected = findSession(target);
+          const selected = findSession(target, process.cwd(), config.activeProfile);
           if (!selected) throw new Error(`Session not found: ${target}`);
           try {
             await requestTerminalApproval("Delete session", `${selected.name} (${selected.id})`);
@@ -1297,7 +1460,7 @@ program
             throw error;
           }
           persist(activeAgent);
-          const deleted = deleteSession(target);
+          const deleted = deleteSession(target, process.cwd(), config.activeProfile);
           console.log(color(`Deleted session: ${deleted.name}`, theme.green));
           if (deleted.id === session.id) {
             const next = createSession(config);
@@ -1311,6 +1474,8 @@ program
       }
 
       if (name === "status") {
+        console.log(`Profile   : ${config.activeProfile}`);
+        console.log(`Profile files: ${profilePaths(config.activeProfile).directory}`);
         console.log(`Provider  : ${config.provider}`);
         console.log(`Model     : ${config.model} (${config.thinkingLevel})`);
         console.log(`Mode      : ${config.mode === "plan" ? "Plan" : "Build"}`);
@@ -1403,6 +1568,7 @@ program
         mode: config.mode === "plan" ? "Plan" : "Build",
         directory: formatDirectory(process.cwd()),
         memory: "Enabled",
+        profile: config.activeProfile,
         headerStyle: config.headerStyle,
         session: session.name,
         version: VERSION,
@@ -1421,7 +1587,7 @@ program
           persist(activeAgent);
           return { mode: config.mode === "plan" ? "Plan" : "Build" };
         }),
-        sessionSuggestions: () => listSessions().map((item) => ({
+        sessionSuggestions: () => listSessions(process.cwd(), config.activeProfile).map((item) => ({
           id: item.id,
           name: item.name,
           detail: `${item.config.provider}/${item.config.model} · ${item.config.mode}`
@@ -1432,6 +1598,21 @@ program
           description: skill.description
         })),
         characterSuggestions: (query) => characterSuggestions(query),
+        profileSuggestions: (query) => {
+          const normalized = query.trim().toLowerCase();
+          if (normalized.startsWith("create ") || normalized.startsWith("delete ")) return [];
+          const filter = normalized.replace(/^use\s+/, "");
+          const profiles = listProfiles().filter((item) => !filter || item.name.includes(filter));
+          return [
+            { value: "/profile create", description: "Create a profile cloned from the active identity", needsArgument: true },
+            { value: "Profiles:", description: "", selectable: false },
+            ...profiles.map((item) => ({
+              value: `/profile use ${item.name}`,
+              label: item.name,
+              description: item.name === config.activeProfile ? "Current profile" : "Switch profile"
+            }))
+          ];
+        },
         themeSuggestions: () => {
           const globalTheme = loadConfig().theme;
           return [
@@ -1484,6 +1665,7 @@ program
             mode: config.mode === "plan" ? "Plan" : "Build",
             directory: formatDirectory(process.cwd()),
             memory: "Enabled",
+            profile: config.activeProfile,
             headerStyle: config.headerStyle,
             session: session.name,
             version: VERSION,

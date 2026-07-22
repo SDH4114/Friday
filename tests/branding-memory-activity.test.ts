@@ -19,6 +19,7 @@ test("startup dashboard is Raya-specific, responsive, and geometrically aligned"
     mode: "Plan",
     directory: "~/giti/Raya-APPLE",
     memory: "Enabled",
+    profile: "coder",
     headerStyle: "small" as const,
     session: "Fresh session",
     version: "0.1.0"
@@ -32,6 +33,7 @@ test("startup dashboard is Raya-specific, responsive, and geometrically aligned"
   assert.match(wide.join("\n"), /Processing and/);
   assert.match(wide.join("\n"), /Logic/);
   assert.match(wide.join("\n"), /Engine/);
+  assert.match(wide.join("\n"), /Profile\s+coder/);
   assert.doesNotMatch(wide.join("\n"), /RAYA PROTOCOL/);
   assert.doesNotMatch(wide.join("\n"), /Understand → inspect → act → verify/);
   assert.match(wide.join("\n"), /\/exit and Ctrl\+C\s+quit/);

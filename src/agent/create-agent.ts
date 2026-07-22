@@ -33,7 +33,7 @@ export function createRayaAgent(input: {
 }): Agent {
   const agent = new Agent({
     initialState: {
-      systemPrompt: createSystemPrompt(input.workspace, input.mcp?.instructions),
+      systemPrompt: createSystemPrompt(input.workspace, input.mcp?.instructions, input.config.activeProfile),
       model: input.model,
       thinkingLevel: input.config.thinkingLevel,
       tools: createRayaTools(input),

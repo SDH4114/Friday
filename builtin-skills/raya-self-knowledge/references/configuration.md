@@ -7,12 +7,14 @@ Raya uses `~/.raya` by default and honors `RAYA_HOME` for isolation. Resolve exa
 - `config.json`: non-secret validated settings.
 - `commands.json`: validated user-created direct commands (`name`, executable, fixed arguments, and optional description/cwd).
 - `.env`: provider and Telegram credentials plus the exact `RAYA_BACKUP_TARGET`, with owner-only permissions.
-- `sessions.json`: conversations, workspace binding, and per-session config snapshots.
-- `USER.md` and `MEMORY.md`: bounded durable context.
-- `skills/`, `plugins/`, `memory/sessions/`, `scheduled.json`, and `web.json`: capability-specific state.
+- `sessions.json`: conversations, workspace/profile binding, and per-session config snapshots.
+- `USER.md`: bounded global user context.
+- `profiles/<name>/SOUL.md`, `AGENTS.md`, `MEMORY.md`, `profile.json`, and `sessions/`: isolated role identity, instructions, durable knowledge, metadata, and readable transcripts.
+- `skills/`, `plugins/`, `scheduled.json`, and `web.json`: shared capability-specific state.
 
 ## Config Fields
 
+- Profile: `activeProfile`.
 - Model: `provider`, `model`, `thinkingLevel`, `localModels`.
 - Behavior: `mode`, `securityMode`, `autoApproveCommands`, `blockedCommands`.
 - Interface: `headerStyle`, `theme`, `hotkeys`.
@@ -46,3 +48,4 @@ Plan allows only MCP tools explicitly marked read-only. Build permits other MCP 
 - Keep secrets out of config, sessions, skills, logs, and fixtures.
 - Migrations should be additive, backward compatible, and regression tested.
 - Global settings must be deliberately merged when rebuilding an older session so stale snapshots do not silently undo them.
+- Profile switching must rebuild the agent and start a clean profile-bound session because system prompts and memory snapshots are frozen at agent creation.

@@ -1,20 +1,26 @@
 import { loadSkillContext } from "../skills/loader.js";
 import { memorySnapshot } from "../memory/store.js";
-import { RAYA_HOME } from "../config/paths.js";
-import { findPreferredWorkspaceInstruction } from "./workspace-instructions.js";
+import { findNearestWorkspaceInstruction } from "./workspace-instructions.js";
 import { rayaCapabilityContext } from "./capabilities.js";
+import { DEFAULT_PROFILE, ensureProfile } from "../profiles/store.js";
+import { existsSync, readFileSync } from "node:fs";
 
-function loadWorkspaceInstruction(name: "AGENTS.md" | "SOUL.md", workspace: string): string | undefined {
-  return findPreferredWorkspaceInstruction(name, RAYA_HOME, workspace)?.content;
+function readProfileInstruction(path: string): string | undefined {
+  if (!existsSync(path)) return undefined;
+  const content = readFileSync(path, "utf8").slice(0, 24_000).trim();
+  return content || undefined;
 }
 
-export function createSystemPrompt(workspace = process.cwd(), mcpInstructions = ""): string {
-  const agents = loadWorkspaceInstruction("AGENTS.md", workspace);
-  const soul = loadWorkspaceInstruction("SOUL.md", workspace);
+export function createSystemPrompt(workspace = process.cwd(), mcpInstructions = "", profile = DEFAULT_PROFILE): string {
+  const paths = ensureProfile(profile);
+  const agents = readProfileInstruction(paths.agents);
+  const soul = readProfileInstruction(paths.soul);
+  const workspaceAgents = findNearestWorkspaceInstruction("AGENTS.md", workspace)?.content;
   return `You are Raya, an open-source personal AI operating and coding assistant running in the user's terminal. Your purpose is to turn requests into understandable, controlled, and verified work across the user's computer and connected services. You are the orchestration layer around selectable AI models, local tools, MCP servers, skills, memory, sessions, and terminal, web, or Telegram interfaces.
 
 Work as a pragmatic senior engineer. Prefer inspecting the workspace with tools before changing assumptions.
 Current workspace: ${workspace}
+Active profile: ${profile}
 
 ${rayaCapabilityContext()}
 
@@ -33,6 +39,7 @@ Rules:
 - Keep memory compact and selective. Never store secrets, credentials, transient chatter, or guesses as facts.
 - When the user refers to earlier work and the current conversation is insufficient, search previous sessions instead of pretending to remember.
 
-${agents ? `## Workspace instructions (AGENTS.md)\n${agents}` : ""}
-${soul ? `## Raya personality (SOUL.md, user-authored)\n${soul}` : ""}\n\n# Persistent memory (frozen at session start)\n${memorySnapshot()}${loadSkillContext()}${mcpInstructions ? `\n\n${mcpInstructions}` : ""}`;
+${soul ? `## Raya profile identity (${profile}/SOUL.md)\n${soul}` : ""}
+${agents ? `## Raya profile instructions (${profile}/AGENTS.md)\n${agents}` : ""}
+${workspaceAgents ? `## Workspace instructions (nearest AGENTS.md)\n${workspaceAgents}` : ""}\n\n# Persistent memory (frozen at session start)\n${memorySnapshot(profile)}${loadSkillContext()}${mcpInstructions ? `\n\n${mcpInstructions}` : ""}`;
 }
