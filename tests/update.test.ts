@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -112,27 +112,19 @@ test("installer has explicit existing-state preservation and commit checkout pat
   assert.match(installer, /RAYA_UPDATE_MODE/);
   assert.match(installer, /RAYA_UPDATE_CHECKPOINT_CREATED/);
   assert.match(installer, /preserve_raya_state/);
-  assert.match(installer, /Raya is already installed\. Run 'raya update'/);
+  assert.match(installer, /create_legacy_update_checkpoint/);
+  assert.match(installer, /Created compatibility checkpoint/);
   assert.match(installer, /git -C "\$tmpdir\/raya" fetch --depth 1 origin "\$REPO_REF"/);
   assert.match(installer, /Preserved existing Raya state/);
 });
 
-test("public installer refuses an uncheckpointed replacement before downloading anything", () => {
-  const bin = mkdtempSync(join(tmpdir(), "raya-existing-bin-"));
-  const existingRaya = join(bin, "raya");
-  writeFileSync(existingRaya, "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
-  const result = spawnSync("bash", ["install.sh"], {
-    cwd: process.cwd(),
-    env: {
-      ...process.env,
-      PATH: `${bin}:${process.env.PATH ?? ""}`,
-      RAYA_HOME: join(bin, "state")
-    },
-    encoding: "utf8"
-  });
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /Run 'raya update'/);
-  assert.doesNotMatch(`${result.stdout}${result.stderr}`, /Downloading Raya/);
+test("installer has a legacy-client checkpoint bridge before replacement", () => {
+  const installer = readFileSync(join(process.cwd(), "install.sh"), "utf8");
+  assert.match(installer, /legacy_update_checkpoint=1/);
+  assert.match(installer, /npm pack --ignore-scripts --pack-destination "\$checkpoint"/);
+  assert.match(installer, /mv "\$checkpoint\/\$old_archive" "\$checkpoint\/raya-package\.tgz"/);
+  assert.match(installer, /export RAYA_UPDATE_CHECKPOINT_CREATED=1/);
+  assert.match(installer, /npm install -g "\$tmpdir\/\$package_tarball"/);
 });
 
 test("checkpoint failure makes installer execution unreachable", async () => {

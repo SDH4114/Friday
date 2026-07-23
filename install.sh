@@ -7,12 +7,14 @@ NODE_MAJOR="${RAYA_NODE_MAJOR:-22}"
 raya_state_dir="${RAYA_HOME:-$HOME/.raya}"
 preserve_raya_state=0
 raya_was_installed=0
+legacy_update_checkpoint=0
 if command -v raya >/dev/null 2>&1; then
   raya_was_installed=1
 fi
 if [ "$raya_was_installed" -eq 1 ] && [ "${RAYA_UPDATE_CHECKPOINT_CREATED:-0}" != "1" ]; then
-  echo "Raya is already installed. Run 'raya update' so a local checkpoint is created before replacement." >&2
-  exit 1
+  # Raya 0.1.3 and older do not pass the checkpoint marker yet. Create the
+  # recovery point here so those clients can upgrade safely to this installer.
+  legacy_update_checkpoint=1
 fi
 if [ "${RAYA_UPDATE_MODE:-0}" = "1" ] || [ -e "$raya_state_dir" ] || [ "$raya_was_installed" -eq 1 ]; then
   preserve_raya_state=1
@@ -131,6 +133,61 @@ npm run build
 # checkout. Install the packed archive instead, because the checkout is removed
 # by the EXIT trap when this script finishes.
 package_tarball="$(npm pack --ignore-scripts --pack-destination "$tmpdir" | tail -n 1)"
+
+create_legacy_update_checkpoint() {
+  local installed_root current_version target_version backup_root base_name checkpoint checkpoint_number created_at old_archive
+  installed_root="$(npm root -g)/@sdh4114/raya"
+  if [ ! -d "$installed_root" ]; then
+    echo "Could not locate the currently installed Raya package for the update checkpoint." >&2
+    exit 1
+  fi
+
+  current_version="$(node -p "require('$installed_root/package.json').version")"
+  target_version="$(node -p "require('./package.json').version")"
+  backup_root="${RAYA_BACKUP_ROOT:-$HOME/raya-backups}"
+  mkdir -p "$backup_root"
+
+  case "$backup_root/" in
+    "$raya_state_dir/"*|"$raya_state_dir")
+      echo "RAYA_BACKUP_ROOT must be outside RAYA_HOME: $backup_root" >&2
+      exit 1
+      ;;
+  esac
+
+  created_at="$(date -u +%Y%m%dT%H%M%SZ)"
+  base_name="update-${current_version}-to-${target_version}-${created_at}"
+  checkpoint="$backup_root/$base_name"
+  checkpoint_number=2
+  while ! mkdir "$checkpoint" 2>/dev/null; do
+    checkpoint="$backup_root/${base_name}-${checkpoint_number}"
+    checkpoint_number=$((checkpoint_number + 1))
+  done
+
+  # npm pack reproduces the installed package without copying its dependency
+  # tree. The state copy includes credentials because this is a local recovery
+  # point, just like the normal Raya update checkpoint.
+  old_archive="$(npm pack --ignore-scripts --pack-destination "$checkpoint" "$installed_root" | tail -n 1)"
+  if [ ! -f "$checkpoint/$old_archive" ]; then
+    echo "Could not package the currently installed Raya for the update checkpoint." >&2
+    exit 1
+  fi
+  mv "$checkpoint/$old_archive" "$checkpoint/raya-package.tgz"
+  if [ -e "$raya_state_dir" ]; then
+    cp -R "$raya_state_dir" "$checkpoint/.raya"
+  else
+    mkdir -p "$checkpoint/.raya"
+  fi
+  printf '{\n  "id": "%s",\n  "name": "Before update v%s to v%s",\n  "createdAt": "%s",\n  "rayaVersion": "%s",\n  "mode": "local",\n  "secretsIncluded": true,\n  "kind": "update-checkpoint",\n  "targetVersion": "%s"\n}\n' \
+    "$base_name" "$current_version" "$target_version" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$current_version" "$target_version" \
+    > "$checkpoint/manifest.json"
+  echo "Created compatibility checkpoint: $checkpoint"
+}
+
+if [ "$legacy_update_checkpoint" -eq 1 ]; then
+  create_legacy_update_checkpoint
+  export RAYA_UPDATE_CHECKPOINT_CREATED=1
+fi
+
 npm install -g "$tmpdir/$package_tarball"
 
 npm_global_bin="$(npm prefix -g)/bin"
