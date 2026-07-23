@@ -8,6 +8,7 @@ import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { ListRootsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { Type } from "@earendil-works/pi-ai";
 import type { McpServerConfig, RayaConfig } from "../config/config.js";
+import { commandInvocation } from "../platform.js";
 import type { RayaTool, ToolExecutionPolicy } from "../types/tool.js";
 
 type McpToolDefinition = Awaited<ReturnType<Client["listTools"]>>["tools"][number];
@@ -120,9 +121,13 @@ async function connectServer(name: string, config: McpServerConfig, clientVersio
   }));
   try {
     if (config.transport === "stdio") {
+      const invocation = commandInvocation(
+        expandMcpValue(config.command),
+        config.args.map((arg) => expandMcpValue(arg))
+      );
       const transport = new StdioClientTransport({
-        command: expandMcpValue(config.command),
-        args: config.args.map((arg) => expandMcpValue(arg)),
+        command: invocation.command,
+        args: invocation.args,
         ...(config.cwd ? { cwd: expandMcpValue(config.cwd) } : {}),
         env: { ...getDefaultEnvironment(), ...resolveRecord(config.env) },
         stderr: "pipe"

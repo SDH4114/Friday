@@ -32,6 +32,7 @@ Raya is not one model. She is the orchestration layer around selectable model pr
 - `src/agent/`: agent assembly, identity, workspace instructions, compaction, and context.
 - `src/agent/capabilities.ts`: single catalog of built-in CLI commands, slash commands, tools, interfaces, persistence, safety boundaries, and installed personal commands.
 - `src/cli/`: commands, setup, config UX, and interface startup.
+- `src/platform.ts`: host-native executable names, shell selection, PATH parsing, npm global command layout, and launcher names.
 - `src/commands/`: schema-validated user command persistence and direct process execution without shell interpolation.
 - `src/backup/`: local/GitHub snapshot creation, listing, package archives, and restore mechanics.
 - `src/config/`: schema, paths, secrets, migration, and durable settings.
@@ -86,4 +87,5 @@ When source behavior differs from the `raya` command, compare `command -v raya`,
 - Workspace writes remain under the resolved workspace even through symlinks.
 - Built-in assets may be bootstrapped, but user-customized files are preserved unless replacement was explicitly requested.
 - Update is a read-only boundary for RAYA_HOME: create a complete checkpoint first, isolate installer state in a temporary RAYA_HOME, and install the exact commit used for metadata. Abort before installation if checkpoint creation fails.
+- Host behavior remains native: `install.ps1`, PowerShell updates, npm `.cmd` shims, Windows PATH separators, process-tree termination, URL/application control, and uninstall launchers are used on Windows; Unix keeps `install.sh` and its native commands.
 - Backup restore and complete uninstall require typed confirmations. Uninstall removes installed/runtime Raya state and backups, but never guesses at or deletes unrelated source checkouts.

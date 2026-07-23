@@ -21,6 +21,7 @@
 9. For repaintable TUI frames, count physical terminal rows after soft wrapping and explicit newlines. Never clear a fixed number of logical lines when content may exceed terminal width.
 10. For MCP, test config normalization, connection failure cleanup, tool safety, stdio end to end, and every supported HTTP-family transport when the environment permits sockets.
 11. For updater work, prove that checkpoint failure prevents installation, metadata and checkout use one commit, and the installer cannot access the user's real `RAYA_HOME`.
+12. For platform work, validate Windows-native executable names and PATH rules in unit tests, keep `install.ps1` and `install.sh` behavior aligned, and retain the Windows GitHub Actions job.
 
 ## Verify
 
@@ -32,6 +33,8 @@ npm run typecheck
 npm run build
 npm pack --dry-run
 ```
+
+The `Validate Raya` workflow repeats typecheck, tests, build, and package inspection on Windows, macOS, and Linux. A local macOS/Linux run proves shared behavior but does not replace a green `windows-latest` job for native PowerShell and `.cmd` execution.
 
 Also run a user-facing command with an isolated `RAYA_HOME` when the behavior touches setup, config, skills, sessions, MCP, or the terminal interface. Use `git diff --check` and inspect the final diff.
 

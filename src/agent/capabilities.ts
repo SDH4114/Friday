@@ -71,6 +71,7 @@ Agent tools:
 
 Interfaces and persistence:
 - The same agent core supports the TUI, one-shot CLI, local Web app, Telegram gateway, scheduler, and subagents.
+- Raya runs on Windows, macOS, and Linux. Windows installation and updates use PowerShell; shell execution uses the host command processor; URL, application, clipboard, npm launcher, backup, restore, update, and uninstall paths are platform-aware.
 - Providers include configured cloud models and local OpenAI-compatible endpoints such as Ollama, LM Studio, vLLM, or llama.cpp.
 - State is separated across config.json, owner-only .env credentials, commands.json, sessions.json, global USER.md, scheduled.json, web.json, plugins, skills, and profiles/<name> under RAYA_HOME (normally ~/.raya). Every profile owns SOUL.md, AGENTS.md, MEMORY.md, and readable session transcripts; session records are filtered by active profile. Backup mode/path metadata is in config.json; the exact target is also stored owner-only in .env.
 - raya backup stores each local version directly in its own ~/raya-backups/<name> folder, with code, .raya, manifest.json, and raya-package.tgz at that folder root. It creates no date, snapshots, source/state wrapper, or Git directory. GitHub snapshots deliberately exclude .env and auth.json and commit only .raya-backup through a temporary clone that is deleted after create, list, or restore. --list groups both sources, while restore always asks GitHub or Local.
@@ -82,7 +83,7 @@ Boundaries:
 - Plan is investigation-oriented; Build enables mutation. Standard asks before consequential actions; Full skips that prompt but not blocked-command checks.
 - Skills are instructions, MCP adds capabilities, and personal raya commands are explicit local executable shortcuts. None of them creates an OS sandbox.
 - raya uninstall requires the exact word UNINSTALL. It removes the installed package, RAYA_HOME, installer launchers, and normally ~/raya-backups, but does not delete Node.js, unrelated developer source checkouts, or a remote GitHub repository.
-- Do not claim browser automation, hosted 24/7 operation, native Pi-extension execution, Windows support, or any capability absent from the running tools.`;
+- Do not claim browser automation, hosted 24/7 operation, native Pi-extension execution, or any capability absent from the running tools.`;
 }
 
 export function rayaAboutMarkdown(): string {

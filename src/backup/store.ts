@@ -16,6 +16,7 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { RayaConfig } from "../config/config.js";
 import { RAYA_HOME } from "../config/paths.js";
+import { commandInvocation } from "../platform.js";
 import { writePrivateFileAtomic } from "../storage/atomic-file.js";
 
 export const RAYA_BACKUP_ROOT = process.env.RAYA_BACKUP_ROOT ?? join(homedir(), "raya-backups");
@@ -52,7 +53,8 @@ export interface BackupCommandResult {
 export type BackupCommandRunner = (command: string, args: string[], options?: { cwd?: string; stdio?: "inherit" | "pipe" }) => Promise<BackupCommandResult>;
 
 export const runBackupCommand: BackupCommandRunner = (command, args, options = {}) => new Promise((resolveCommand, reject) => {
-  const child = spawn(command, args, {
+  const invocation = commandInvocation(command, args);
+  const child = spawn(invocation.command, invocation.args, {
     cwd: options.cwd,
     stdio: options.stdio === "inherit" ? "inherit" : ["inherit", "pipe", "pipe"]
   });

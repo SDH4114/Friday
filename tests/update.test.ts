@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   GITHUB_COMMIT_URL,
   compareVersions,
+  installerPath,
   installGithubReleaseWithCheckpoint,
   isUpdateApproved,
   readGithubRelease,
@@ -77,6 +78,12 @@ test("Raya updater pins the installer checkout and isolates all installer state 
   assert.equal(readFileSync(protectedFile, "utf8"), "user-owned\n");
   assert.equal(existsSync(installerState), false);
   assert.equal(existsSync(installerStateRoot), false);
+});
+
+test("Raya updater has a pinned installer path for every supported desktop platform", () => {
+  assert.equal(installerPath("win32"), "install.ps1");
+  assert.equal(installerPath("darwin"), "install.sh");
+  assert.equal(installerPath("linux"), "install.sh");
 });
 
 test("update command startup does not initialize or rewrite RAYA_HOME", () => {

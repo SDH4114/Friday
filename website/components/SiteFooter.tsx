@@ -15,7 +15,7 @@ export function SiteFooter() {
         <div className="footer-intro"><Brand /><p>Understand deeply.<br />Plan clearly.<br />Build precisely.</p></div>
         {groups.map((group) => <div key={group.title}><h2>{group.title}</h2>{group.links.map(([label, href]) => href.startsWith("http") ? <a key={label} href={href} target="_blank" rel="noreferrer">{label}</a> : <Link key={label} href={href}>{label}</Link>)}</div>)}
       </div>
-      <div className="shell footer-bottom"><span>© {new Date().getFullYear()} Raya contributors.</span><span>Open source · MIT licensed · Built for macOS and Linux.</span></div>
+      <div className="shell footer-bottom"><span>© {new Date().getFullYear()} Raya contributors.</span><span>Open source · MIT licensed · Built for Windows, macOS, and Linux.</span></div>
     </footer>
   );
 }

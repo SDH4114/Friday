@@ -32,7 +32,7 @@ export default function HomePage() {
     <>
       <section className="hero shell">
         <div className="hero__copy">
-          <p className="hero__eyebrow">Open Source · MIT Licensed · macOS & Linux</p>
+          <p className="hero__eyebrow">Open Source · MIT Licensed · Windows · macOS · Linux</p>
           <h1>Your companion in the depth of code.</h1>
           <p className="hero__lede">Raya is a personal AI agent harness that understands your workspace, improves its behavior with your direction, and adapts to the way you work. You choose the model, tools, rules, memory, skills, and interface.</p>
           <div className="hero__actions"><Link className="button" href="/docs/installation">Install Raya<ArrowRight size={17} /></Link><a className="button button--ghost" href={siteConfig.github} target="_blank" rel="noreferrer"><Github size={17} />View on GitHub</a><Link className="text-link" href="/docs">Read the documentation →</Link></div>
@@ -73,7 +73,7 @@ export default function HomePage() {
 
       <section className="boundaries shell" aria-labelledby="boundaries-title">
         <div className="boundaries__title"><CircleAlert /><div><div className="section-index">CURRENT BOUNDARIES</div><h2 id="boundaries-title">No hidden fine print.</h2></div></div>
-        <ul><li><Check />macOS and Linux; no current Windows support.</li><li><LockKeyhole />Shell and filesystem tools are not sandboxed.</li><li><TerminalSquare />Web research is text search/fetch, not browser automation.</li><li><Check />Telegram and scheduling require a running local process.</li><li><Boxes />Native Pi extensions need a Raya adapter.</li><li><Check />Tool calling depends on the selected model.</li></ul>
+        <ul><li><Check />Native installers for Windows, macOS, and Linux.</li><li><LockKeyhole />Shell and filesystem tools are not sandboxed.</li><li><TerminalSquare />Windows Terminal is recommended for the complete TUI.</li><li><Check />Telegram and scheduling require a running local process.</li><li><Boxes />Native Pi extensions need a Raya adapter.</li><li><Check />Tool calling depends on the selected model.</li></ul>
         <Link href="/docs/limitations">Read all known limitations <ArrowRight size={15} /></Link>
       </section>
 

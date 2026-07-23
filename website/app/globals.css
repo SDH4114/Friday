@@ -64,12 +64,16 @@ button { color: inherit; }
 .text-link:hover { color: var(--ice); }
 .install-command { max-width: 100%; min-width: 0; border: 1px solid var(--border); background: var(--deep); }
 .install-command__bar { display: flex; justify-content: space-between; align-items: center; min-height: 37px; padding: 0 12px; border-bottom: 1px solid var(--border); color: var(--muted); font: 700 10px var(--mono); text-transform: uppercase; letter-spacing: .1em; }
-.install-command__bar > span { display: flex; align-items: center; gap: 7px; }
+.install-command__platforms { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.install-command__platforms svg { flex: 0 0 auto; margin-right: 2px; }
+.install-command__platforms button { border: 0; border-radius: 3px; padding: 5px 7px; background: transparent; color: var(--muted); font: inherit; letter-spacing: .08em; text-transform: uppercase; cursor: pointer; }
+.install-command__platforms button:hover { color: var(--ice); }
+.install-command__platforms button[aria-pressed="true"] { background: rgba(85,217,255,.1); color: var(--cyan); }
 .install-command > code { display: block; padding: 17px 16px 12px; color: var(--ice); font: 12px/1.55 var(--mono); overflow-x: auto; white-space: nowrap; }
 .install-command > code span { color: var(--cyan); }
 .install-command > a { display: block; padding: 0 16px 15px; color: var(--secondary); font: 11px var(--mono); }
 .install-command--compact { max-width: 720px; }
-.install-command--compact .install-command__bar { border-bottom: 0; border-right: 1px solid var(--border); width: 155px; float: left; min-height: 54px; }
+.install-command--compact .install-command__bar { min-height: 42px; }
 .install-command--compact > code { padding: 18px; }
 .copy-button { display: inline-flex; align-items: center; gap: 6px; padding: 5px 7px; border: 0; background: transparent; color: var(--secondary); font: 600 10px var(--mono); cursor: pointer; }
 .copy-button:hover { color: var(--cyan); }
@@ -285,7 +289,7 @@ td { color: #b7ccd5; } tr:last-child td { border-bottom: 0; }
   :root { --shell: calc(100% - 24px); }
   .site-header__inner { min-height: 60px; }.brand small { display: none; }
   .hero { padding-top: 52px; padding-bottom: 70px; }.hero h1 { font-size: clamp(43px, 13vw, 58px); }.hero__lede { font-size: 17px; }.hero__actions { align-items: stretch; }.hero__actions .button { width: 100%; flex: 1 1 100%; }.hero__actions .text-link { flex-basis: 100%; padding-top: 8px; }
-  .install-command__bar { min-height: 34px; }.install-command > code { font-size: 10px; }
+  .install-command__bar { min-height: 34px; }.install-command > code { font-size: 10px; }.install-command__platforms { gap: 1px; }.install-command__platforms button { padding-inline: 5px; font-size: 8px; }
   .terminal-raya__body { min-height: 250px; padding: 22px 16px; }.hero__note { width: 100%; }
   .workflow, .features, .capability-index, .preview-section, .architecture-section, .boundaries, .open-source, .final-cta { padding-block: 84px; }.workflow > h2, .section-heading h2, .architecture-section h2, .open-source h2, .final-cta h2 { font-size: 42px; margin-bottom: 38px; }
   .section-heading { gap: 25px; }.section-heading > p { font-size: 16px; }
@@ -293,7 +297,7 @@ td { color: #b7ccd5; } tr:last-child td { border-bottom: 0; }
   .product-demo__body { min-height: 400px; padding: 18px; }.product-demo__status { gap: 16px; font-size: 8px; }.demo-lines p { grid-template-columns: 30px 1fr; font-size: 10px; }
   .architecture-map { padding: 18px; }.architecture-map__branches { grid-template-columns: 1fr 1fr; }.capability-grid { grid-template-columns: 1fr; }
   .boundaries ul { grid-template-columns: 1fr; }.boundaries li { padding-inline: 0; }.boundaries h2 { font-size: 38px; }
-  .open-source { gap: 35px; }.final-cta .terminal-raya { order: -1; }.install-command--compact .install-command__bar { float: none; width: 100%; min-height: 34px; border-right: 0; border-bottom: 1px solid var(--border); }
+  .open-source { gap: 35px; }.final-cta .terminal-raya { order: -1; }.install-command--compact .install-command__bar { min-height: 34px; }
   .footer-grid { grid-template-columns: 1fr 1fr; gap: 40px 20px; }.footer-bottom { display: block; }.footer-bottom span { display: block; margin: 5px 0; }
   .doc-article h1, .docs-index h1, .standard-page h1 { font-size: 43px; }.doc-article > header > p, .docs-index > header > p { font-size: 16px; }.doc-article h2 { font-size: 24px; }.code-block pre { font-size: 11px; }.doc-pagination { grid-template-columns: 1fr; }.doc-pagination > span { display: none; }
   .docs-index__start { display: block; }.docs-index__start .button { margin-top: 22px; }.docs-index__groups, .about-grid { grid-template-columns: 1fr; }.about-grid section { border-right: 0; padding-inline: 0; }

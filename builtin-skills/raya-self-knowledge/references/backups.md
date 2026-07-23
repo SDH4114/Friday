@@ -44,6 +44,8 @@ Each confirmed update creates a unique local `update-<current>-to-<target>-<time
 
 The checkpoint must finish before the installer starts. The updater passes the exact checked Git SHA as `RAYA_REPO_REF`, marks the completed checkpoint, and gives the installer a disposable temporary `RAYA_HOME`. For older Raya clients that do not pass the checkpoint marker, the installer creates a compatibility checkpoint from the currently installed package and `.raya` before replacement. It also skips state initialization in update mode or whenever existing state is present. Consequently an update does not create, overwrite, migrate, synchronize, or delete any path inside the user's `.raya`. Normal later startup may install a missing built-in skill, but it still preserves every existing user-owned skill folder.
 
+The updater downloads `install.ps1` and runs it through PowerShell on Windows; macOS and Linux continue to use `install.sh` through Bash. Both paths receive the same pinned commit, checkpoint marker, update-mode marker, and disposable `RAYA_HOME`. Windows backup and restore package operations invoke `npm.cmd`, and uninstall recognizes only npm-owned `raya.cmd`/`raya.ps1` shims before removing state.
+
 ## GitHub Layout and Lifetime
 
 GitHub mode does not create or retain a repository under `~/raya-backups`. Create, list, and restore each clone the configured repository into a temporary system directory and remove that checkout in a `finally` cleanup path, including when an operation fails.

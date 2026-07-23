@@ -11,6 +11,7 @@ type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 export type InstallerRunner = (script: string, environment: NodeJS.ProcessEnv) => Promise<void>;
 
 export type GithubRelease = { commit: string; version: string };
+export type InstallerKind = "powershell" | "shell";
 export interface CheckedUpdateOptions {
   createCheckpoint?: (currentVersion: string, targetVersion: string) => Promise<BackupListItem>;
   install?: (commit: string) => Promise<void>;
@@ -77,11 +78,26 @@ export async function readGithubVersion(fetchImpl: FetchLike = fetch): Promise<s
   return (await readGithubRelease(fetchImpl)).version;
 }
 
+export function installerKind(targetPlatform: NodeJS.Platform = process.platform): InstallerKind {
+  return targetPlatform === "win32" ? "powershell" : "shell";
+}
+
+export function installerPath(targetPlatform: NodeJS.Platform = process.platform): string {
+  return installerKind(targetPlatform) === "powershell" ? "install.ps1" : "install.sh";
+}
+
 const runInstallerScript: InstallerRunner = (script, environment) => new Promise<void>((resolve, reject) => {
-  const child = spawn("bash", ["-s"], {
+  const kind = installerKind();
+  const child = spawn(
+    kind === "powershell" ? "powershell.exe" : "bash",
+    kind === "powershell"
+      ? ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-"]
+      : ["-s"],
+    {
     stdio: ["pipe", "inherit", "inherit"],
     env: environment
-  });
+    }
+  );
   child.once("error", reject);
   child.stdin.once("error", reject);
   child.once("close", (code) => code === 0 ? resolve() : reject(new Error(`Raya installer exited with code ${code ?? "unknown"}.`)));
@@ -94,15 +110,19 @@ export async function runGithubInstaller(
   runner: InstallerRunner = runInstallerScript
 ): Promise<void> {
   if (!/^[0-9a-f]{40}$/i.test(commit)) throw new Error("Raya update received an invalid GitHub commit reference.");
+  const path = installerPath();
   let response: Response;
   try {
-    response = await fetchImpl(`${GITHUB_RAW_URL}/${commit}/install.sh`, { signal: AbortSignal.timeout(20_000) });
+    response = await fetchImpl(`${GITHUB_RAW_URL}/${commit}/${path}`, { signal: AbortSignal.timeout(20_000) });
   } catch (error) {
     throw new Error(`Could not download the Raya installer: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (!response.ok) throw new Error(`GitHub returned ${response.status} while downloading the installer.`);
   const script = await response.text();
-  if (!script.startsWith("#!") || !script.includes("Raya")) throw new Error("Downloaded installer did not look like the official Raya installer.");
+  const looksOfficial = installerKind() === "powershell"
+    ? script.includes("# Raya Windows installer")
+    : script.startsWith("#!") && script.includes("Raya");
+  if (!looksOfficial) throw new Error("Downloaded installer did not look like the official Raya installer.");
 
   // Even if a future installer accidentally initializes Raya, route all state
   // writes to a disposable RAYA_HOME. The user's real .raya is never exposed

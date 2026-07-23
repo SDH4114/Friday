@@ -34,6 +34,7 @@ import { homedir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
+import { commandInvocation } from "../platform.js";
 import { RAYA_PLUGINS_DIR } from "../config/paths.js";
 import { openApplication, openUrl, runGitShortcut, webSearchUrl, YOUTUBE_HOME_URL, youtubeSearchUrl } from "./shortcuts.js";
 import { normalizePiPackageName } from "../plugins/package.js";
@@ -90,7 +91,7 @@ program.configureHelp({
     return command.name() === "web" ? term.replace(/^web\b/, "web (demo)") : term;
   }
 });
-const VERSION = "0.1.4";
+const VERSION = "0.1.5";
 let builtinCommandNames = new Set<string>();
 setActiveTheme(["uninstall", "update"].includes(process.argv[2] ?? "") ? "ocean" : loadConfig().theme);
 
@@ -904,7 +905,7 @@ program
     }
     if(action!=="install"||!packageArg)throw new Error("Usage: raya plugin install npm:<package>");
     const packageName=normalizePiPackageName(packageArg);mkdirSync(RAYA_PLUGINS_DIR,{recursive:true,mode:0o700});
-    await new Promise<void>((resolve,reject)=>{const child=spawn("npm",["install","--prefix",RAYA_PLUGINS_DIR,"--ignore-scripts","--no-audit","--no-fund","--",packageName],{stdio:"inherit"});child.on("close",code=>code===0?resolve():reject(new Error(`npm exited ${code}`)));child.on("error",reject);});
+    await new Promise<void>((resolve,reject)=>{const invocation=commandInvocation("npm",["install","--prefix",RAYA_PLUGINS_DIR,"--ignore-scripts","--no-audit","--no-fund","--",packageName]);const child=spawn(invocation.command,invocation.args,{stdio:"inherit"});child.on("close",code=>code===0?resolve():reject(new Error(`npm exited ${code}`)));child.on("error",reject);});
     updateConfig({ piPackages: [...new Set([...config.piPackages, packageName])] });
     console.log(`Installed ${packageName}. Skills are loaded on the next session. Native Pi extensions require a Raya adapter.`);
   });

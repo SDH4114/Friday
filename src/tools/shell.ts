@@ -1,6 +1,7 @@
 import { Type } from "@earendil-works/pi-ai";
 import { spawn } from "node:child_process";
 import type { RayaConfig } from "../config/config.js";
+import { defaultShell } from "../platform.js";
 import type { RayaTool, ToolExecutionPolicy } from "../types/tool.js";
 
 const ShellParameters = Type.Object({
@@ -39,7 +40,7 @@ function assertPlanSafe(command: string): void {
     throw new Error("Plan mode only permits simple read-only shell commands.");
   }
   const [program, ...args] = command.trim().split(/\s+/);
-  const allowed = new Set(["pwd", "ls", "find", "rg", "grep", "cat", "head", "tail", "wc", "stat", "du", "git"]);
+  const allowed = new Set(["pwd", "ls", "find", "rg", "grep", "cat", "head", "tail", "wc", "stat", "du", "git", "cd", "dir", "where", "type"]);
   if (!program || !allowed.has(program)) throw new Error("Plan mode only permits read-only inspection commands.");
   if (program === "find" && args.some((arg) => ["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls"].includes(arg))) {
     throw new Error("Plan mode does not permit mutating find actions.");
@@ -102,7 +103,7 @@ function stripExecutionPrefixes(segment: string): string {
 function matchesCommandPrefix(command: string, prefix: string): boolean {
   const raw = command.trim();
   const [program = "", ...args] = raw.split(/\s+/);
-  const normalized = [program.split("/").at(-1) ?? program, ...args].join(" ");
+  const normalized = [program.split(/[\\/]/).at(-1) ?? program, ...args].join(" ");
   const candidate = prefix.trim();
   return Boolean(candidate) && (raw === candidate || raw.startsWith(`${candidate} `) || normalized === candidate || normalized.startsWith(`${candidate} `));
 }
@@ -138,7 +139,7 @@ export function createShellTool(config: RayaConfig, policy: ToolExecutionPolicy 
       const result = await new Promise<ShellDetails>((resolve, reject) => {
         const child = spawn(params.command, {
           cwd: workspace,
-          shell: process.env.SHELL ?? "/bin/sh",
+          shell: defaultShell(),
           stdio: ["ignore", "pipe", "pipe"],
           detached: true
         });
@@ -155,6 +156,16 @@ export function createShellTool(config: RayaConfig, policy: ToolExecutionPolicy 
         const terminate = (): void => {
           if (terminating) return;
           terminating = true;
+          if (process.platform === "win32") {
+            if (child.pid) {
+              const killer = spawn("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+              killer.once("error", () => child.kill());
+              killer.once("close", (code) => { if (code !== 0) child.kill(); });
+            } else {
+              child.kill();
+            }
+            return;
+          }
           const kill = (signal: NodeJS.Signals): void => {
             if (!child.pid) return;
             try { process.kill(-child.pid, signal); }

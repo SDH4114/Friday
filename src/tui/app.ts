@@ -1,5 +1,6 @@
 import type { Agent } from "@earendil-works/pi-agent-core";
 import type { ImageContent } from "@earendil-works/pi-ai/compat";
+import { defaultShell } from "../platform.js";
 import { emitKeypressEvents } from "node:readline";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { spawn } from "node:child_process";
@@ -1333,7 +1334,7 @@ async function readTuiLine(mode: "Plan" | "Build", info: () => TuiSessionInfo, o
 
 async function runTerminalCommand(command: string): Promise<void> {
   await new Promise<void>((resolve) => {
-    const child = spawn(command, { cwd: process.cwd(), shell: process.env.SHELL ?? "/bin/zsh", stdio: "inherit" });
+    const child = spawn(command, { cwd: process.cwd(), shell: defaultShell(), stdio: "inherit" });
     child.on("close", () => resolve());
     child.on("error", (error) => {
       console.error(error.message);

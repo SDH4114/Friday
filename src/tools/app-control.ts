@@ -1,33 +1,38 @@
 import { Type } from "@earendil-works/pi-ai";
 import { execFile, spawn } from "node:child_process";
 import { platform } from "node:os";
+import { basename } from "node:path";
 import { promisify } from "node:util";
 import type { RayaTool, ToolExecutionPolicy } from "../types/tool.js";
 
 const execFileAsync = promisify(execFile);
 const AppParameters = Type.Object({
   action: Type.Union([Type.Literal("open"), Type.Literal("close")]),
-  target: Type.String({ description: "Application name, executable, or macOS app bundle name." })
+  target: Type.String({ description: "Application name, executable, or app bundle name." })
 });
 
 export function createAppControlTool(policy: ToolExecutionPolicy = {}): RayaTool<typeof AppParameters, { action: string; target: string }> {
   return {
     name: "app_control",
     label: "App control",
-    description: "Open an application or close a named application/process on macOS or Linux.",
+    description: "Open an application or close a named application/process on macOS, Linux, or Windows.",
     parameters: AppParameters,
     executionMode: "sequential",
     async execute(_id, params) {
       if (!params.target.trim() || params.target.startsWith("-")) throw new Error("Application target must be a non-empty name.");
       await policy.confirmDangerousAction?.(`${params.action} application`, params.target);
-      const isMac = platform() === "darwin";
+      const hostPlatform = platform();
       if (params.action === "open") {
-        if (isMac) await execFileAsync("open", ["-a", params.target]);
+        if (hostPlatform === "darwin") await execFileAsync("open", ["-a", params.target]);
         else await new Promise<void>((resolve, reject) => {
           const child = spawn(params.target, [], { detached: true, stdio: "ignore" });
           child.once("error", reject);
           child.once("spawn", () => { child.unref(); resolve(); });
         });
+      } else if (hostPlatform === "win32") {
+        const targetName = basename(params.target);
+        const imageName = targetName.toLowerCase().endsWith(".exe") ? targetName : `${targetName}.exe`;
+        await execFileAsync("taskkill.exe", ["/IM", imageName, "/T", "/F"]);
       } else {
         await execFileAsync("pkill", ["-x", params.target]);
       }

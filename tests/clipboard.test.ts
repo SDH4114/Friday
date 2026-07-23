@@ -171,3 +171,14 @@ test("macOS clipboard output becomes real multimodal image content", () => {
     image: { type: "image", data: "aW1hZ2UgYnl0ZXM=", mimeType: "image/png" }
   });
 });
+
+test("Windows clipboard JSON uses the same bounded text and image parser", () => {
+  assert.deepEqual(parseMacClipboardOutput('{"kind":"text","text":"windows\\r\\nclipboard"}'), {
+    kind: "text",
+    text: "windows\nclipboard"
+  });
+  assert.deepEqual(parseMacClipboardOutput('{"kind":"image","data":"aGVsbG8=","mimeType":"image/png"}'), {
+    kind: "image",
+    image: { type: "image", data: "aGVsbG8=", mimeType: "image/png" }
+  });
+});

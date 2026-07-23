@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { z } from "zod";
 import { ensureRayaHome, RAYA_COMMANDS_PATH } from "../config/paths.js";
+import { commandInvocation } from "../platform.js";
 import { writePrivateFileAtomic } from "../storage/atomic-file.js";
 
 const CommandNameSchema = z.string()
@@ -72,7 +73,8 @@ export function formatCustomCommand(command: CustomCommand): string {
 
 export async function runCustomCommand(command: CustomCommand, extraArgs: string[]): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    const child = spawn(command.executable, [...command.args, ...extraArgs], {
+    const invocation = commandInvocation(command.executable, [...command.args, ...extraArgs]);
+    const child = spawn(invocation.command, invocation.args, {
       cwd: command.cwd ?? process.cwd(),
       env: process.env,
       shell: false,

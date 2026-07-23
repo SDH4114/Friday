@@ -10,7 +10,7 @@ const terminalConfig: Record<RayaPose, { label: string; command: string; lines: 
   build: { label: "Raya build terminal", command: "raya --mode build", lines: ["approval   required for mutation", "tools      shell · files · web", "status     ready"] },
   connect: { label: "Raya connections terminal", command: "raya capabilities", lines: ["model      selected runtime", "tools      MCP + local tools", "workspace  memory + skills"] },
   memory: { label: "Raya memory terminal", command: "raya memory status", lines: ["USER.md    preferences loaded", "MEMORY.md  decisions loaded", "scope      current workspace"] },
-  portrait: { label: "Raya terminal", command: "raya about", lines: ["agent      personal AI harness", "runtime    macOS · Linux", "license    MIT"] },
+  portrait: { label: "Raya terminal", command: "raya about", lines: ["agent      personal AI harness", "runtime    Windows · macOS · Linux", "license    MIT"] },
   cta: { label: "Start Raya terminal", command: "raya", lines: ["mode       plan", "workspace  ~/projects/current", "prompt     ready"] }
 };
 

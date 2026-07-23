@@ -62,6 +62,25 @@ if (data) {
 JSON.stringify(result);
 `;
 
+const WINDOWS_CLIPBOARD_SCRIPT = String.raw`
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$image = [System.Windows.Forms.Clipboard]::GetImage()
+if ($null -ne $image) {
+  $stream = New-Object System.IO.MemoryStream
+  try {
+    $image.Save($stream, [System.Drawing.Imaging.ImageFormat]::Png)
+    @{ kind = "image"; data = [Convert]::ToBase64String($stream.ToArray()); mimeType = "image/png" } | ConvertTo-Json -Compress
+  } finally {
+    $stream.Dispose()
+    $image.Dispose()
+  }
+} else {
+  @{ kind = "text"; text = [System.Windows.Forms.Clipboard]::GetText() } | ConvertTo-Json -Compress
+}
+`;
+
 export function normalizePastedText(text: string): string {
   return text.replace(/\r\n?/gu, "\n").replace(/\0/gu, "");
 }
@@ -142,12 +161,11 @@ export async function readClipboard(): Promise<ClipboardPayload | undefined> {
     return parseMacClipboardOutput(stdout);
   }
   if (process.platform === "win32") {
-    const { stdout } = await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "Get-Clipboard -Raw"], {
+    const { stdout } = await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-STA", "-Command", WINDOWS_CLIPBOARD_SCRIPT], {
       encoding: "utf8",
-      maxBuffer: MAX_CLIPBOARD_BYTES
+      maxBuffer: 40 * 1024 * 1024
     });
-    const text = normalizePastedText(stdout);
-    return text ? { kind: "text", text } : undefined;
+    return parseMacClipboardOutput(stdout);
   }
   return undefined;
 }

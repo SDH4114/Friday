@@ -1,6 +1,6 @@
 {
   "name": "@sdh4114/raya",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Raya is an open-source personal AI PC assistant and coding harness for the terminal.",
   "type": "module",
   "bin": {
@@ -10,12 +10,13 @@
     "dist",
     "builtin-skills",
     "install.sh",
+    "install.ps1",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "clean": "rm -rf dist",
-    "build": "npm run clean && tsc && chmod +x dist/cli/index.js",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "node scripts/build.mjs",
     "dev": "tsx src/cli/index.ts",
     "prepack": "npm run build",
     "start": "node dist/cli/index.js",

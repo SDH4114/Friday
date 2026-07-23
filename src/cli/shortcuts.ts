@@ -20,12 +20,15 @@ export function webSearchUrl(query: string): string {
   return `https://www.google.com/search?q=${encodeSearchQuery(query)}`;
 }
 
+export function urlOpenCommand(url: string, targetPlatform: NodeJS.Platform = process.platform): { executable: string; args: string[] } {
+  if (targetPlatform === "darwin") return { executable: "open", args: [url] };
+  if (targetPlatform === "win32") return { executable: "rundll32.exe", args: ["url.dll,FileProtocolHandler", url] };
+  return { executable: "xdg-open", args: [url] };
+}
+
 export async function openUrl(url: string): Promise<void> {
-  if (platform() === "darwin") {
-    await execFileAsync("open", [url]);
-    return;
-  }
-  await execFileAsync("xdg-open", [url]);
+  const command = urlOpenCommand(url, platform());
+  await execFileAsync(command.executable, command.args);
 }
 
 export async function openApplication(application: string): Promise<void> {

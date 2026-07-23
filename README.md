@@ -1,18 +1,26 @@
 # Raya
 
-Raya is an MIT-licensed, open-source personal AI PC assistant and coding-agent harness for macOS and Linux. It is deliberately built for a useful daily workflow: one terminal session can work on code, inspect and edit local files, run shell commands, search the web, control applications, and optionally stay reachable through your own Telegram bot.
+Raya is an MIT-licensed, open-source personal AI PC assistant and coding-agent harness for Windows, macOS, and Linux. It is deliberately built for a useful daily workflow: one terminal session can work on code, inspect and edit local files, run shell commands, search the web, control applications, and optionally stay reachable through your own Telegram bot.
 
 Raya supports **OpenAI Codex via ChatGPT Plus/Pro/Codex OAuth**, API-key providers through the `@earendil-works/pi-ai` adapter, and local OpenAI-compatible inference servers such as Ollama, LM Studio, vLLM, and llama.cpp. OpenAI Codex is optional: you can connect a different provider, use a local model, or skip provider setup until later. Raya uses `@earendil-works/pi-agent-core` rather than reimplementing an agent loop.
 
 ## Install
 
-macOS and Linux only (Windows is not supported in the current release):
+Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/SDH4114/Raya-APPLE/prime/install.ps1 | iex
+```
+
+The Windows installer uses Node.js 22+ and Git already on the machine, or installs missing prerequisites through `winget`. It builds and packs Raya, installs the package globally, adds npm's global command directory to the user `PATH`, and exposes `raya.cmd` in the current PowerShell session. Windows Terminal is recommended for the complete interactive TUI.
+
+macOS or Linux:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/SDH4114/Raya-APPLE/prime/install.sh | bash
 ```
 
-The installer installs Node.js 22 with `nvm` if needed, downloads the repository, builds it, and installs a self-contained `raya` binary globally. It also makes the command available in the terminal that started the installation, including when npm's global bin directory is missing from `PATH`. This GitHub-source approach works before the npm package is published. After publishing `@sdh4114/raya`, the equivalent install is:
+The Unix installer installs Node.js 22 with `nvm` if needed. Both installers download the repository, build it, pack it, install Raya globally, preserve an existing `RAYA_HOME`, and make the command available on `PATH`. This GitHub-source approach works before the npm package is published. After publishing `@sdh4114/raya`, the equivalent install on every platform is:
 
 ```bash
 npm install -g @sdh4114/raya
@@ -145,7 +153,7 @@ All tools implement the same `RayaTool` contract (`name`, `description`, JSON sc
 - `shell` — executes commands in the workspace.
 - `web` — DuckDuckGo text search and public URL fetch; local/private network addresses are blocked.
 - `list_files`, `read_file`, `write_file` — workspace filesystem access. Writing is available in Build mode.
-- `app_control` — opens applications and closes named apps/processes on macOS/Linux.
+- `app_control` — opens applications and closes named apps/processes on Windows, macOS, and Linux.
 
 Plan mode blocks common mutating shell commands; Build mode permits normal local work. This is a convenience policy, not a security sandbox.
 
@@ -425,6 +433,7 @@ For a safer remote path, every dangerous tool action requested from Telegram—s
 - Web browsing is text search/fetch only: no browser clicking or form automation.
 - Telegram runs in the local CLI process, not on a server.
 - Native Pi CLI extensions still require a Raya adapter; MCP and instruction skills are supported directly.
+- Windows uses PowerShell for installation and updates, `cmd.exe` for shell-tool commands unless `ComSpec` selects another command processor, native npm `.cmd` shims, Windows URL/application launchers, and Windows clipboard/process-tree commands.
 
 ## Later roadmap
 
@@ -432,7 +441,6 @@ For a safer remote path, every dangerous tool action requested from Telegram—s
 - Real sandboxing and configurable local approvals.
 - Browser automation.
 - Optional post-session memory consolidation and a complete plugin loader.
-- Windows support.
 
 ## Publishing
 
@@ -442,7 +450,7 @@ Authenticate to npm as the `@sdh4114` maintainer, update the version, then run:
 npm publish --access public
 ```
 
-`prepack` runs the production build. GitHub remains the host for `install.sh`; npm is only the package registry.
+`prepack` runs the production build. GitHub remains the host for `install.sh` and `install.ps1`; npm is only the package registry.
 
 ## License
 

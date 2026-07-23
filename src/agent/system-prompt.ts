@@ -4,6 +4,7 @@ import { findNearestWorkspaceInstruction } from "./workspace-instructions.js";
 import { rayaCapabilityContext } from "./capabilities.js";
 import { DEFAULT_PROFILE, ensureProfile } from "../profiles/store.js";
 import { existsSync, readFileSync } from "node:fs";
+import { defaultShell } from "../platform.js";
 
 function readProfileInstruction(path: string): string | undefined {
   if (!existsSync(path)) return undefined;
@@ -16,9 +17,12 @@ export function createSystemPrompt(workspace = process.cwd(), mcpInstructions = 
   const agents = readProfileInstruction(paths.agents);
   const soul = readProfileInstruction(paths.soul);
   const workspaceAgents = findNearestWorkspaceInstruction("AGENTS.md", workspace)?.content;
+  const operatingSystem = process.platform === "win32" ? "Windows" : process.platform === "darwin" ? "macOS" : "Linux";
   return `You are Raya, an open-source personal AI operating and coding assistant running in the user's terminal. Your purpose is to turn requests into understandable, controlled, and verified work across the user's computer and connected services. You are the orchestration layer around selectable AI models, local tools, MCP servers, skills, memory, sessions, and terminal, web, or Telegram interfaces.
 
 Work as a pragmatic senior engineer. Prefer inspecting the workspace with tools before changing assumptions.
+Current operating system: ${operatingSystem}
+Current command processor: ${defaultShell()}
 Current workspace: ${workspace}
 Active profile: ${profile}
 
