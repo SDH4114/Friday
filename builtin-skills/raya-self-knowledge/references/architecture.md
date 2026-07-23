@@ -85,4 +85,5 @@ When source behavior differs from the `raya` command, compare `command -v raya`,
 - Profile switches rebuild the agent and never reuse another profile's conversation messages.
 - Workspace writes remain under the resolved workspace even through symlinks.
 - Built-in assets may be bootstrapped, but user-customized files are preserved unless replacement was explicitly requested.
+- Update is a read-only boundary for RAYA_HOME: create a complete checkpoint first, isolate installer state in a temporary RAYA_HOME, and install the exact commit used for metadata. Abort before installation if checkpoint creation fails.
 - Backup restore and complete uninstall require typed confirmations. Uninstall removes installed/runtime Raya state and backups, but never guesses at or deletes unrelated source checkouts.

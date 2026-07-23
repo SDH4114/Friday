@@ -19,6 +19,8 @@ Raya A.P.P.L.E. is an open-source personal AI operating and coding assistant: Ad
 8. Distinguish source, `dist`, and an installed `raya` binary before diagnosing inconsistent behavior.
 9. Treat configuration, secrets, persistent state, external tools, model output, MCP content, and user files as trust boundaries.
 
+Profile listing supports both `raya profile list` and the explicit `raya profile --list` alias; keep both forms documented when changing profile behavior.
+
 ## Reason About Raya Correctly
 
 - Never confuse Raya with the active language model. Raya owns orchestration, tools, policies, interfaces, and persistence; the provider supplies inference.

@@ -75,8 +75,8 @@ test("local backups are sibling folders with files directly inside and restore f
   assert.match(listed, /GitHub backups\n\(none\)/);
   assert.match(listed, /Local backups/);
   assert.match(listed, /Backup name\s+Raya version\s+Created/);
-    assert.match(listed, /before-upgrade\s+v0\.1\.3/);
-    assert.match(listed, /after-upgrade\s+v0\.1\.3/);
+    assert.match(listed, /before-upgrade\s+v0\.1\.4/);
+    assert.match(listed, /after-upgrade\s+v0\.1\.4/);
   assert.match(listed, /Restore: raya backup --restore 'before-upgrade'/);
   assert.doesNotMatch(listed, /--from/);
 
@@ -99,6 +99,64 @@ test("local backups are sibling folders with files directly inside and restore f
   });
   assert.equal(existsSync(join(home, "changed-after-backup.txt")), false);
   assert.equal(readFileSync(join(home, "USER.md"), "utf8"), "remember me\n");
+});
+
+test("every update checkpoint is local, complete, unique, and leaves RAYA_HOME untouched", () => {
+  const root = mkdtempSync(join(tmpdir(), "raya-update-checkpoint-test-"));
+  const home = join(root, ".raya");
+  const backups = join(root, "raya-backups");
+  mkdirSync(join(home, "profiles", "custom"), { recursive: true });
+  writeFileSync(join(home, "config.json"), "{ user formatting stays untouched }\n");
+  writeFileSync(join(home, ".env"), "RAYA_SECRET=checkpointed\n");
+  writeFileSync(join(home, "profiles", "custom", "SOUL.md"), "custom profile soul\n");
+
+  const script = [
+    "import { createUpdateCheckpoint } from './src/backup/store.ts';",
+    "const first = await createUpdateCheckpoint('0.1.3', '0.1.4', undefined, new Date('2026-07-23T10:11:12.000Z'));",
+    "const second = await createUpdateCheckpoint('0.1.3', '0.1.4', undefined, new Date('2026-07-23T10:11:12.000Z'));",
+    "console.log(JSON.stringify({ first, second }));"
+  ].join(" ");
+  const output = execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", script], {
+    cwd: process.cwd(),
+    env: { ...process.env, RAYA_HOME: home, RAYA_BACKUP_ROOT: backups },
+    encoding: "utf8",
+    timeout: 60_000
+  });
+  const result = JSON.parse(output) as {
+    first: { reference: string; directory: string; kind: string; targetVersion: string };
+    second: { reference: string; directory: string; kind: string; targetVersion: string };
+  };
+
+  assert.notEqual(result.first.reference, result.second.reference);
+  assert.equal(result.first.kind, "update-checkpoint");
+  assert.equal(result.first.targetVersion, "0.1.4");
+  assert.ok(existsSync(join(result.first.directory, "raya-package.tgz")));
+  assert.equal(readFileSync(join(result.first.directory, ".raya", ".env"), "utf8"), "RAYA_SECRET=checkpointed\n");
+  assert.equal(readFileSync(join(result.first.directory, ".raya", "profiles", "custom", "SOUL.md"), "utf8"), "custom profile soul\n");
+  assert.equal(readFileSync(join(home, "config.json"), "utf8"), "{ user formatting stays untouched }\n");
+  assert.equal(readFileSync(join(home, ".env"), "utf8"), "RAYA_SECRET=checkpointed\n");
+  assert.equal(readFileSync(join(home, "profiles", "custom", "SOUL.md"), "utf8"), "custom profile soul\n");
+});
+
+test("update checkpoint refuses a backup root inside RAYA_HOME before writing there", () => {
+  const root = mkdtempSync(join(tmpdir(), "raya-unsafe-checkpoint-root-"));
+  const home = join(root, ".raya");
+  const unsafeBackups = join(home, "checkpoints");
+  mkdirSync(home, { recursive: true });
+  writeFileSync(join(home, "custom.txt"), "untouched\n");
+  const script = [
+    "import { createUpdateCheckpoint } from './src/backup/store.ts';",
+    "try { await createUpdateCheckpoint('0.1.3', '0.1.4'); }",
+    "catch (error) { console.log(error.message); }"
+  ].join(" ");
+  const output = execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", script], {
+    cwd: process.cwd(),
+    env: { ...process.env, RAYA_HOME: home, RAYA_BACKUP_ROOT: unsafeBackups },
+    encoding: "utf8"
+  });
+  assert.match(output, /must be outside RAYA_HOME/);
+  assert.equal(existsSync(unsafeBackups), false);
+  assert.equal(readFileSync(join(home, "custom.txt"), "utf8"), "untouched\n");
 });
 
 test("GitHub backups use only temporary clones and list directly from the remote", () => {

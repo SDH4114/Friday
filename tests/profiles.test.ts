@@ -34,6 +34,7 @@ test("profiles migrate legacy identity, clone predictably, and switch with the s
     assert.equal(config.activeProfile, "coder");
     assert.match(run(home, ["status"]), /profile: coder/);
     assert.match(run(home, ["profile", "list"]), /^Active profile: coder$/m);
+    assert.match(run(home, ["profile", "--list"]), /^Active profile: coder$/m);
     assert.match(run(home, ["profile", "show", "coder"]), /SOUL\.md:/);
   } finally {
     rmSync(home, { recursive: true, force: true });

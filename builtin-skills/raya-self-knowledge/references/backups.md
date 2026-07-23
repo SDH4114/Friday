@@ -9,6 +9,7 @@
 - `raya backup --github <repository>`: configure and verify a GitHub repository, then ask for the backup name unless `--name` is supplied.
 - `raya backup --list` and typo-compatible `raya bakcup --list`: print separate GitHub and Local sections with backup name, Raya version, creation date, and restore command.
 - `raya backup --restore [name-or-reference]`: always ask `GitHub` or `Local`, even when a reference was supplied, then require the exact word `RESTORE`.
+- `raya update`: after confirmation, require a complete local update checkpoint before installation. If checkpoint creation fails, abort without installing.
 - `raya uninstall`: require the exact word `UNINSTALL`, remove the package, launchers, `RAYA_HOME`, and local backup root. `--keep-backups` preserves the local backup root. Remote repositories are never deleted.
 
 ## Local Layout
@@ -36,6 +37,12 @@ Every new local backup is exactly one direct child of the backup root:
 The source tree keeps its natural folders, but there is no extra date directory, `snapshot`, `snapshots`, `backups`, `raya-source`, `raya-home`, or `.git` wrapper around it. The backup name becomes the folder name after safe path normalization. A duplicate folder name fails instead of replacing an existing backup. If creation fails, Raya removes the incomplete named folder.
 
 Local backups include the complete `.raya` state, including `.env` and `auth.json`, so the backup root must remain private.
+
+## Update Checkpoints and State Isolation
+
+Each confirmed update creates a unique local `update-<current>-to-<target>-<timestamp>` sibling folder even when ordinary backups are unconfigured or configured for GitHub. Its manifest uses `kind: update-checkpoint` and records the target version. Checkpoints are never silently replaced; a same-timestamp collision receives a numeric suffix.
+
+The checkpoint must finish before the installer starts. The updater passes the exact checked Git SHA as `RAYA_REPO_REF`, marks the completed checkpoint, and gives the installer a disposable temporary `RAYA_HOME`. The public installer refuses to replace an already installed Raya unless it was launched by this checkpointed update path. It also skips state initialization in update mode or whenever existing state is present. Consequently an update does not create, overwrite, migrate, synchronize, or delete any path inside the user's `.raya`. Normal later startup may install a missing built-in skill, but it still preserves every existing user-owned skill folder.
 
 ## GitHub Layout and Lifetime
 

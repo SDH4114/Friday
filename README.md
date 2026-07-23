@@ -51,9 +51,10 @@ raya gateway --restart
 raya mcp list
 raya skills list
 raya profile list
+raya profile --list          # explicit list alias
 raya profile create coder --clone
 raya profile coder      # select coder; same as: raya profile use coder
-raya update            # check GitHub, then ask before updating Raya
+raya update            # confirm, checkpoint locally, then update Raya
 raya backup --setup    # choose GitHub or local backup storage
 raya backup            # save a named version after setup
 raya backup --list     # list rollback references
@@ -214,6 +215,7 @@ The original root `SOUL.md`, `AGENTS.md`, and `MEMORY.md` are copied into the ma
 
 ```bash
 raya profile                         # active profile and list
+raya profile --list                  # explicit list alias
 raya profile coder                   # select an existing profile
 raya profile use coder               # explicit equivalent
 raya profile create coder            # fresh identity, instructions, and memory
@@ -247,6 +249,8 @@ Set `RAYA_HOME=/path` to move config, OAuth credentials, sessions, and memory. D
 
 `raya backup --setup` interactively chooses GitHub or local storage. The first plain `raya backup` also starts setup automatically when no target exists. Backups live under `~/raya-backups`, contain Raya's source, an installable package archive, and Raya state, and use a name supplied for each saved version.
 
+Every confirmed `raya update` first creates a required local checkpoint named like `~/raya-backups/update-0.1.4-to-0.1.5-20260723T101112Z/`. It contains the currently installed Raya package, source files available to that installation, a manifest, and a complete copy of `RAYA_HOME`, including local credentials. If checkpoint creation fails, installation does not begin. The updater then runs the installer with a disposable temporary `RAYA_HOME` and pins both the downloaded installer and repository checkout to the same Git commit used for the version check. Existing files and directories under the user's `.raya` are therefore not created, replaced, migrated, or deleted by the update. Running the public installer over an existing Raya installation is rejected with guidance to use `raya update`, preventing an uncheckpointed replacement path.
+
 ```bash
 raya backup --setup
 raya backup
@@ -277,7 +281,7 @@ Blocked commands are checked before Raya invokes the shell, including common wra
 
 Raya ships with built-in `debugging`, `implementation`, `project-audit`, `web-research`, `raya-self-knowledge`, and `create-raya-skills` skills. The expanded self-knowledge package is Raya's internal map of her identity, runtime flow, source ownership, every CLI and slash command, interfaces, tools, configuration, hotkeys, MCP formats, personal commands, persistent stores, safety model, honest limitations, and self-maintenance workflow. The executable catalog in `src/agent/capabilities.ts` is shared by the system prompt, `/about`, and `/help`, so these surfaces stay aligned; installed personal commands are added dynamically. It explicitly separates Raya's orchestration from the selected model and separates executable MCP capabilities from instruction-only skills.
 
-The installer copies built-ins into `~/.raya/skills/` and the first Raya startup performs the same sync as a fallback. Existing folders are never replaced automatically, so user edits remain yours. A later Raya update only installs missing skills. Use the explicit force command when you deliberately want every installed built-in, including `raya-self-knowledge`, replaced by the package's current version.
+On a fresh installation with no existing Raya state, the installer copies built-ins into `~/.raya/skills/`; the first normal Raya startup performs the same missing-only sync as a fallback. If `RAYA_HOME` already exists or the installer is running as an update, installer initialization is skipped completely. Existing folders are never replaced automatically, so user edits remain yours. Use the explicit force command when you deliberately want every installed built-in, including `raya-self-knowledge`, replaced by the package's current version.
 
 Raya discovers `SKILL.md` metadata from both `~/.raya/skills/<skill>/SKILL.md` and `<workspace>/.agents/skills/<skill>/SKILL.md`. Only the compact catalog is added at session start; complete instructions and requested references are loaded through `use_skill` when relevant. This keeps the model context small and makes skill activation visible in the TUI. Skills are context instructions, never executable code or additional permissions by themselves.
 

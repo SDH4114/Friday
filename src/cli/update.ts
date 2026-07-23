@@ -1,11 +1,21 @@
 import { spawn } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createUpdateCheckpoint, type BackupListItem } from "../backup/store.js";
 
 export const GITHUB_COMMIT_URL = "https://api.github.com/repos/SDH4114/Raya-APPLE/commits/prime";
 export const GITHUB_RAW_URL = "https://raw.githubusercontent.com/SDH4114/Raya-APPLE";
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
+export type InstallerRunner = (script: string, environment: NodeJS.ProcessEnv) => Promise<void>;
 
 export type GithubRelease = { commit: string; version: string };
+export interface CheckedUpdateOptions {
+  createCheckpoint?: (currentVersion: string, targetVersion: string) => Promise<BackupListItem>;
+  install?: (commit: string) => Promise<void>;
+  onCheckpoint?: (checkpoint: BackupListItem) => void;
+}
 
 function parseVersion(value: string): { core: number[]; prerelease: string[] } | undefined {
   const match = value.trim().match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/);
@@ -67,7 +77,22 @@ export async function readGithubVersion(fetchImpl: FetchLike = fetch): Promise<s
   return (await readGithubRelease(fetchImpl)).version;
 }
 
-export async function runGithubInstaller(commit: string, fetchImpl: FetchLike = fetch): Promise<void> {
+const runInstallerScript: InstallerRunner = (script, environment) => new Promise<void>((resolve, reject) => {
+  const child = spawn("bash", ["-s"], {
+    stdio: ["pipe", "inherit", "inherit"],
+    env: environment
+  });
+  child.once("error", reject);
+  child.stdin.once("error", reject);
+  child.once("close", (code) => code === 0 ? resolve() : reject(new Error(`Raya installer exited with code ${code ?? "unknown"}.`)));
+  child.stdin.end(script);
+});
+
+export async function runGithubInstaller(
+  commit: string,
+  fetchImpl: FetchLike = fetch,
+  runner: InstallerRunner = runInstallerScript
+): Promise<void> {
   if (!/^[0-9a-f]{40}$/i.test(commit)) throw new Error("Raya update received an invalid GitHub commit reference.");
   let response: Response;
   try {
@@ -79,10 +104,34 @@ export async function runGithubInstaller(commit: string, fetchImpl: FetchLike = 
   const script = await response.text();
   if (!script.startsWith("#!") || !script.includes("Raya")) throw new Error("Downloaded installer did not look like the official Raya installer.");
 
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn("bash", ["-s"], { stdio: ["pipe", "inherit", "inherit"] });
-    child.once("error", reject);
-    child.once("close", (code) => code === 0 ? resolve() : reject(new Error(`Raya installer exited with code ${code ?? "unknown"}.`)));
-    child.stdin.end(script);
-  });
+  // Even if a future installer accidentally initializes Raya, route all state
+  // writes to a disposable RAYA_HOME. The user's real .raya is never exposed
+  // to the installer process during an update.
+  const isolatedStateRoot = mkdtempSync(join(tmpdir(), "raya-update-state-"));
+  try {
+    await runner(script, {
+      ...process.env,
+      RAYA_UPDATE_MODE: "1",
+      RAYA_UPDATE_CHECKPOINT_CREATED: "1",
+      RAYA_REPO_REF: commit,
+      RAYA_HOME: join(isolatedStateRoot, "raya-home")
+    });
+  } finally {
+    rmSync(isolatedStateRoot, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Keep the recovery point and installation order in one tested invariant:
+ * installation is unreachable until a complete checkpoint exists.
+ */
+export async function installGithubReleaseWithCheckpoint(
+  currentVersion: string,
+  release: GithubRelease,
+  options: CheckedUpdateOptions = {}
+): Promise<BackupListItem> {
+  const checkpoint = await (options.createCheckpoint ?? createUpdateCheckpoint)(currentVersion, release.version);
+  options.onCheckpoint?.(checkpoint);
+  await (options.install ?? runGithubInstaller)(release.commit);
+  return checkpoint;
 }

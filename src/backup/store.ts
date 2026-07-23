@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   renameSync,
   rmSync,
   writeFileSync
@@ -31,6 +32,8 @@ export interface BackupManifest {
   rayaVersion: string;
   mode: "local" | "github";
   secretsIncluded: boolean;
+  kind?: "manual" | "update-checkpoint";
+  targetVersion?: string;
 }
 
 export interface BackupListItem extends BackupManifest {
@@ -81,24 +84,52 @@ function pathInside(parent: string, child: string): boolean {
   return nested === "" || (!nested.startsWith(`..${sep}`) && nested !== "..");
 }
 
+function resolveThroughExistingAncestor(path: string): string {
+  let current = resolve(path);
+  const missing: string[] = [];
+  while (!existsSync(current)) {
+    const parent = dirname(current);
+    if (parent === current) break;
+    missing.unshift(basename(current));
+    current = parent;
+  }
+  const existing = existsSync(current) ? realpathSync(current) : current;
+  return resolve(existing, ...missing);
+}
+
+function assertBackupRootOutsideRayaHome(): void {
+  const state = resolveThroughExistingAncestor(RAYA_HOME);
+  const backupRoot = resolveThroughExistingAncestor(RAYA_BACKUP_ROOT);
+  if (pathInside(state, backupRoot)) {
+    throw new Error(`RAYA_BACKUP_ROOT must be outside RAYA_HOME: ${RAYA_BACKUP_ROOT}`);
+  }
+}
+
 function excludedSourcePath(source: string, candidate: string): boolean {
   const parts = relative(source, candidate).split(sep);
-  return parts.some((part) => part === ".git" || part === "node_modules" || part === ".DS_Store" || part === ".next" || part === "coverage");
+  return pathInside(RAYA_HOME, candidate)
+    || parts.some((part) => part === ".git" || part === "node_modules" || part === ".DS_Store" || part === ".next" || part === "coverage");
 }
 
 function copySourceContents(source: string, destination: string): void {
   mkdirSync(destination, { recursive: true, mode: 0o700 });
+  const backupRootIsInsideSource = pathInside(source, RAYA_BACKUP_ROOT);
   for (const entry of readdirSync(source)) {
     const candidate = join(source, entry);
-    if (excludedSourcePath(source, candidate) || pathInside(RAYA_BACKUP_ROOT, candidate)) continue;
+    if (excludedSourcePath(source, candidate) || (backupRootIsInsideSource && pathInside(RAYA_BACKUP_ROOT, candidate))) continue;
     cpSync(candidate, join(destination, entry), {
       recursive: true,
-      filter: (nested) => !excludedSourcePath(source, nested) && !pathInside(RAYA_BACKUP_ROOT, nested)
+      filter: (nested) => !excludedSourcePath(source, nested)
+        && (!backupRootIsInsideSource || !pathInside(RAYA_BACKUP_ROOT, nested))
     });
   }
 }
 
 function copyState(destination: string, includeSecrets: boolean): void {
+  if (!existsSync(RAYA_HOME)) {
+    mkdirSync(destination, { recursive: true, mode: 0o700 });
+    return;
+  }
   cpSync(RAYA_HOME, destination, {
     recursive: true,
     filter: (candidate) => {
@@ -135,6 +166,8 @@ function parseManifest(content: string): BackupManifest | undefined {
     if (typeof value.id !== "string" || typeof value.name !== "string" || typeof value.createdAt !== "string" || typeof value.rayaVersion !== "string") return undefined;
     if (value.mode !== "local" && value.mode !== "github") return undefined;
     if (typeof value.secretsIncluded !== "boolean") return undefined;
+    if (value.kind !== undefined && value.kind !== "manual" && value.kind !== "update-checkpoint") return undefined;
+    if (value.targetVersion !== undefined && typeof value.targetVersion !== "string") return undefined;
     return value as BackupManifest;
   } catch {
     return undefined;
@@ -190,6 +223,7 @@ export async function setupGithubBackup(url: string, runner: BackupCommandRunner
 }
 
 export async function setupLocalBackup(_name = "local", _runner: BackupCommandRunner = runBackupCommand): Promise<BackupConfig> {
+  assertBackupRootOutsideRayaHome();
   mkdirSync(RAYA_BACKUP_ROOT, { recursive: true, mode: 0o700 });
   return { mode: "local", name: "local", directory: RAYA_BACKUP_ROOT, configuredAt: new Date().toISOString() };
 }
@@ -244,17 +278,24 @@ export async function createBackup(config: BackupConfig, name: string, rayaVersi
     createdAt: new Date().toISOString(),
     rayaVersion,
     mode: config.mode,
-    secretsIncluded: config.mode === "local"
+    secretsIncluded: config.mode === "local",
+    kind: "manual"
   };
 
   if (config.mode === "local") {
+    assertBackupRootOutsideRayaHome();
     mkdirSync(RAYA_BACKUP_ROOT, { recursive: true, mode: 0o700 });
     const destination = localBackupDirectory(displayName);
-    if (existsSync(destination)) throw new Error(`A local backup named "${displayName}" already exists: ${destination}`);
+    let reserved = false;
     try {
+      mkdirSync(destination, { mode: 0o700 });
+      reserved = true;
       await populateLocalSnapshot(destination, manifest, runner);
     } catch (error) {
-      rmSync(destination, { recursive: true, force: true });
+      if (!reserved && (error as NodeJS.ErrnoException).code === "EEXIST") {
+        throw new Error(`A local backup named "${displayName}" already exists: ${destination}`);
+      }
+      if (reserved) rmSync(destination, { recursive: true, force: true });
       throw error;
     }
     return { ...manifest, reference: folderName, directory: destination, target: folderName, layout: "local-flat" };
@@ -282,6 +323,65 @@ export async function createBackup(config: BackupConfig, name: string, rayaVersi
       layout: "github" as const
     };
   });
+}
+
+function updateCheckpointFolder(currentVersion: string, targetVersion: string, createdAt: Date): string {
+  const timestamp = createdAt.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+  return safeSegment(`update-${currentVersion}-to-${targetVersion}-${timestamp}`);
+}
+
+/**
+ * Create an unconditional local recovery point before the updater changes the
+ * installed package. This does not read or write backup configuration in
+ * RAYA_HOME and never mutates the state being copied.
+ */
+export async function createUpdateCheckpoint(
+  currentVersion: string,
+  targetVersion: string,
+  runner: BackupCommandRunner = runBackupCommand,
+  createdAt = new Date()
+): Promise<BackupListItem> {
+  assertBackupRootOutsideRayaHome();
+  mkdirSync(RAYA_BACKUP_ROOT, { recursive: true, mode: 0o700 });
+  const baseName = updateCheckpointFolder(currentVersion, targetVersion, createdAt);
+  let folderName = baseName;
+  let suffix = 2;
+  let destination = join(RAYA_BACKUP_ROOT, folderName);
+  while (true) {
+    try {
+      mkdirSync(destination, { mode: 0o700 });
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      folderName = `${baseName}-${suffix}`;
+      suffix += 1;
+      destination = join(RAYA_BACKUP_ROOT, folderName);
+    }
+  }
+
+  const manifest: BackupManifest = {
+    id: folderName,
+    name: `Before update v${currentVersion} to v${targetVersion}`,
+    createdAt: createdAt.toISOString(),
+    rayaVersion: currentVersion,
+    mode: "local",
+    secretsIncluded: true,
+    kind: "update-checkpoint",
+    targetVersion
+  };
+  try {
+    await populateLocalSnapshot(destination, manifest, runner);
+  } catch (error) {
+    rmSync(destination, { recursive: true, force: true });
+    throw new Error(`Could not create the required update checkpoint: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return {
+    ...manifest,
+    reference: folderName,
+    directory: destination,
+    target: folderName,
+    layout: "local-flat"
+  };
 }
 
 async function listGitHistory(directory: string, mode: "local" | "github", target: string, runner: BackupCommandRunner): Promise<BackupListItem[]> {

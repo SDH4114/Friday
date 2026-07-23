@@ -1,6 +1,18 @@
 import assert from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
-import { GITHUB_COMMIT_URL, readGithubRelease, compareVersions, isUpdateApproved, readGithubVersion } from "../src/cli/update.js";
+import {
+  GITHUB_COMMIT_URL,
+  compareVersions,
+  installGithubReleaseWithCheckpoint,
+  isUpdateApproved,
+  readGithubRelease,
+  readGithubVersion,
+  runGithubInstaller
+} from "../src/cli/update.js";
 
 test("Raya update compares release and prerelease versions correctly", () => {
   assert.equal(compareVersions("0.1.1", "0.1.0"), 1);
@@ -37,4 +49,100 @@ test("Raya update only accepts an explicit confirmation", () => {
 test("Raya update rejects malformed GitHub package metadata", async () => {
   const commit = "c".repeat(40);
   await assert.rejects(() => readGithubVersion(async (url) => new Response(JSON.stringify(url === GITHUB_COMMIT_URL ? { sha: commit } : { version: "latest" }), { status: 200 })), /no valid version/);
+});
+
+test("Raya updater pins the installer checkout and isolates all installer state writes", async () => {
+  const commit = "d".repeat(40);
+  const realState = mkdtempSync(join(tmpdir(), "raya-real-update-state-"));
+  const protectedFile = join(realState, "custom.txt");
+  writeFileSync(protectedFile, "user-owned\n");
+  let installerState = "";
+  let installerStateRoot = "";
+
+  await runGithubInstaller(
+    commit,
+    async () => new Response("#!/usr/bin/env bash\n# Raya installer fixture\n", { status: 200 }),
+    async (_script, environment) => {
+      assert.equal(environment.RAYA_UPDATE_MODE, "1");
+      assert.equal(environment.RAYA_UPDATE_CHECKPOINT_CREATED, "1");
+      assert.equal(environment.RAYA_REPO_REF, commit);
+      assert.notEqual(environment.RAYA_HOME, realState);
+      installerState = environment.RAYA_HOME!;
+      installerStateRoot = join(installerState, "..");
+      mkdirSync(installerState, { recursive: true });
+      writeFileSync(join(installerState, "would-have-overwritten.txt"), "isolated\n");
+    }
+  );
+
+  assert.equal(readFileSync(protectedFile, "utf8"), "user-owned\n");
+  assert.equal(existsSync(installerState), false);
+  assert.equal(existsSync(installerStateRoot), false);
+});
+
+test("update command startup does not initialize or rewrite RAYA_HOME", () => {
+  const state = mkdtempSync(join(tmpdir(), "raya-update-help-state-"));
+  const soul = join(state, "SOUL.md");
+  const config = join(state, "config.json");
+  writeFileSync(soul, "custom soul that must stay byte-for-byte\n");
+  writeFileSync(config, "{ malformed user config\n");
+
+  const output = execFileSync(process.execPath, ["--import", "tsx", "src/cli/index.ts", "update", "--help"], {
+    cwd: process.cwd(),
+    env: { ...process.env, RAYA_HOME: state, NO_COLOR: "1" },
+    encoding: "utf8"
+  });
+
+  assert.match(output, /Checkpoint Raya, preserve RAYA_HOME/);
+  assert.equal(readFileSync(soul, "utf8"), "custom soul that must stay byte-for-byte\n");
+  assert.equal(readFileSync(config, "utf8"), "{ malformed user config\n");
+  assert.equal(existsSync(join(state, "skills")), false);
+  assert.equal(existsSync(join(state, "profiles")), false);
+
+  const missingState = join(mkdtempSync(join(tmpdir(), "raya-update-missing-state-")), ".raya");
+  execFileSync(process.execPath, ["--import", "tsx", "src/cli/index.ts", "update", "--help"], {
+    cwd: process.cwd(),
+    env: { ...process.env, RAYA_HOME: missingState, NO_COLOR: "1" },
+    encoding: "utf8"
+  });
+  assert.equal(existsSync(missingState), false);
+});
+
+test("installer has explicit existing-state preservation and commit checkout paths", () => {
+  const installer = readFileSync(join(process.cwd(), "install.sh"), "utf8");
+  assert.match(installer, /RAYA_UPDATE_MODE/);
+  assert.match(installer, /RAYA_UPDATE_CHECKPOINT_CREATED/);
+  assert.match(installer, /preserve_raya_state/);
+  assert.match(installer, /Raya is already installed\. Run 'raya update'/);
+  assert.match(installer, /git -C "\$tmpdir\/raya" fetch --depth 1 origin "\$REPO_REF"/);
+  assert.match(installer, /Preserved existing Raya state/);
+});
+
+test("public installer refuses an uncheckpointed replacement before downloading anything", () => {
+  const bin = mkdtempSync(join(tmpdir(), "raya-existing-bin-"));
+  const existingRaya = join(bin, "raya");
+  writeFileSync(existingRaya, "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+  const result = spawnSync("bash", ["install.sh"], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH ?? ""}`,
+      RAYA_HOME: join(bin, "state")
+    },
+    encoding: "utf8"
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Run 'raya update'/);
+  assert.doesNotMatch(`${result.stdout}${result.stderr}`, /Downloading Raya/);
+});
+
+test("checkpoint failure makes installer execution unreachable", async () => {
+  let installerCalled = false;
+  await assert.rejects(() => installGithubReleaseWithCheckpoint("0.1.3", {
+    commit: "e".repeat(40),
+    version: "0.1.4"
+  }, {
+    createCheckpoint: async () => { throw new Error("disk full"); },
+    install: async () => { installerCalled = true; }
+  }), /disk full/);
+  assert.equal(installerCalled, false);
 });

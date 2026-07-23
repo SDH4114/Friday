@@ -40,6 +40,8 @@ Plan allows only MCP tools explicitly marked read-only. Build permits other MCP 
 
 `raya backup --setup` or the first unconfigured `raya backup` writes non-secret backup metadata through `updateConfig` and the exact local root or Git URL through owner-only `.env` storage. Each new local version is an independent `~/raya-backups/<name>/` folder containing code, `.raya`, `manifest.json`, and `raya-package.tgz` directly at its root. There are no date folders, wrapper folders, or local Git repository, and duplicate names are rejected instead of overwritten. GitHub mode excludes `.env` and `auth.json`, stages only `.raya-backup`, and performs create/list/restore through a temporary clone outside `~/raya-backups` that is always removed afterward. `--list` groups GitHub and Local versions. Restore always asks for the source and requires typed confirmation before reinstalling code and restoring state. Legacy nested local snapshots remain readable and restorable.
 
+`raya update` does not depend on or change the configured backup mode. After update confirmation it always creates a local checkpoint under the backup root, then launches the pinned installer with a temporary `RAYA_HOME`. Loading the update command itself must also avoid config normalization, profile migration, skill synchronization, and custom-command initialization so malformed or hand-edited state remains untouched.
+
 ## Update Rules
 
 - Parse all stored or imported values through `normalizeConfig`.

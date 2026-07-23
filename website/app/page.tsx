@@ -15,7 +15,7 @@ const features = [
   { number: "07", label: "CONTROL", title: "Security stays visible", text: "Plan and Build, Standard and Full, blocked commands, MCP policies, and Telegram approvals make consequential actions explicit.", artifact: ["security: standard", "blocked: rm", "approval: required"] },
   { number: "08", label: "PERSONALIZE", title: "Make the harness yours", text: "Configure hotkeys, themes, reasoning, direct commands, context files, local providers, workspace skills, and the complete RAYA_HOME boundary.", artifact: ["theme: ocean", "toggleMode: tab", "RAYA_HOME=~/.raya"] },
   { number: "09", label: "EVOLVE", title: "Improve the agent with intent", text: "Raya can update its memory, create reusable skills, learn your character and project rules, and add direct commands when you ask. Every change stays inspectable and user-owned.", artifact: ["memory     USER.md", "create_skill approved", "commands   raya serve"] },
-  { number: "10", label: "MAINTAIN", title: "Stay current by choice", text: "Check the official GitHub version, compare it with your local Raya, and update only after explicit confirmation. Your local state remains separate from the executable.", artifact: ["github     v0.1.3", "local      v0.1.3", "update     confirmation"] }
+  { number: "10", label: "MAINTAIN", title: "Update without sacrificing your Raya", text: "Every confirmed update creates a complete local checkpoint, installs the exact checked Git commit, and keeps your real RAYA_HOME outside the installer.", artifact: ["checkpoint  required", "commit      pinned", ".raya       isolated"] }
 ];
 
 const capabilityGroups = [
@@ -24,7 +24,7 @@ const capabilityGroups = [
   { label: "TOOLS", title: "Give the agent real reach", items: ["Files and folders", "Bounded shell", "Public web search and fetch", "Memory and sessions", "App control, scheduling, subagents"] },
   { label: "EXTEND", title: "Add your own capabilities", items: ["MCP stdio, HTTP, and SSE", "Built-in, user, workspace, and package skills", "Build-only skill authoring", "Personal direct commands", "Supported Pi packages"] },
   { label: "CONTINUITY", title: "Keep context under your control", items: ["Named Raya profiles", "Profile-bound sessions", "Global USER.md + profile MEMORY.md", "Profile SOUL.md and AGENTS.md", "Portable RAYA_HOME state"] },
-  { label: "CONTROL", title: "See and approve consequential work", items: ["Plan and Build modes", "Standard and Full security", "Blocked command checks", "MCP and Telegram approvals", "Atomic configuration updates"] }
+  { label: "CONTROL", title: "See and approve consequential work", items: ["Plan and Build modes", "Standard and Full security", "Blocked command checks", "MCP and Telegram approvals", "Checkpointed, state-isolated updates"] }
 ];
 
 export default function HomePage() {

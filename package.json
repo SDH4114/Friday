@@ -1,6 +1,6 @@
 {
   "name": "@sdh4114/raya",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Raya is an open-source personal AI PC assistant and coding harness for the terminal.",
   "type": "module",
   "bin": {

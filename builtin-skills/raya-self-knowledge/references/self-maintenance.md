@@ -20,6 +20,7 @@
 8. For TUI input, test raw bytes and parsed keypress events; terminal Escape and control chords can arrive through both paths.
 9. For repaintable TUI frames, count physical terminal rows after soft wrapping and explicit newlines. Never clear a fixed number of logical lines when content may exceed terminal width.
 10. For MCP, test config normalization, connection failure cleanup, tool safety, stdio end to end, and every supported HTTP-family transport when the environment permits sockets.
+11. For updater work, prove that checkpoint failure prevents installation, metadata and checkout use one commit, and the installer cannot access the user's real `RAYA_HOME`.
 
 ## Verify
 

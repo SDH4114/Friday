@@ -3,7 +3,7 @@ import { formatCustomCommand, listCustomCommands } from "../commands/store.js";
 export const RAYA_CLI_COMMANDS = [
   ["raya", "Start the interactive TUI"],
   ["raya <prompt>", "Run a one-shot agent request"],
-  ["raya profile <name>|list|use|create|show|rename|delete", "Manage isolated Raya profiles"],
+  ["raya profile [--list]|<name>|list|use|create|show|rename|delete", "Manage isolated Raya profiles; --list explicitly lists them"],
   ["raya commands add|list|show|remove", "Create and manage personal direct commands"],
   ["raya local add|remove|list", "Manage local OpenAI-compatible models"],
   ["raya web", "Start the local Web application demo"],
@@ -12,7 +12,7 @@ export const RAYA_CLI_COMMANDS = [
   ["raya plugin install|list", "Manage supported Pi packages"],
   ["raya mcp list|add|enable|disable|remove|test", "Manage MCP servers"],
   ["raya skills list|sync", "Inspect or synchronize built-in skills"],
-  ["raya update", "Check GitHub for a newer version and update after confirmation"],
+  ["raya update", "Create a local checkpoint, preserve RAYA_HOME, and install the pinned GitHub update after confirmation"],
   ["raya backup --setup|--list|--restore", "Configure, create, inspect, or restore local and GitHub backups"],
   ["raya uninstall", "Remove Raya, local state, launchers, and backups after typed confirmation"],
   ["raya providers / models", "Inspect providers and models"],
@@ -74,6 +74,7 @@ Interfaces and persistence:
 - Providers include configured cloud models and local OpenAI-compatible endpoints such as Ollama, LM Studio, vLLM, or llama.cpp.
 - State is separated across config.json, owner-only .env credentials, commands.json, sessions.json, global USER.md, scheduled.json, web.json, plugins, skills, and profiles/<name> under RAYA_HOME (normally ~/.raya). Every profile owns SOUL.md, AGENTS.md, MEMORY.md, and readable session transcripts; session records are filtered by active profile. Backup mode/path metadata is in config.json; the exact target is also stored owner-only in .env.
 - raya backup stores each local version directly in its own ~/raya-backups/<name> folder, with code, .raya, manifest.json, and raya-package.tgz at that folder root. It creates no date, snapshots, source/state wrapper, or Git directory. GitHub snapshots deliberately exclude .env and auth.json and commit only .raya-backup through a temporary clone that is deleted after create, list, or restore. --list groups both sources, while restore always asks GitHub or Local.
+- Before installing an update, Raya must successfully create a complete local update checkpoint under ~/raya-backups. The installer receives a disposable RAYA_HOME and the exact checked Git commit, so no existing file or directory under the user's RAYA_HOME is created, replaced, migrated, or deleted by the update.
 - The active profile's AGENTS.md supplies durable profile instructions and SOUL.md supplies its user-authored personality. The nearest workspace AGENTS.md is loaded separately for project-specific rules. Profiles isolate identity, memory, and sessions, but do not create an OS sandbox or duplicate shared providers, credentials, MCP, skills, commands, or schedules.
 
 Boundaries:

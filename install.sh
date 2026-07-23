@@ -4,6 +4,19 @@ set -euo pipefail
 REPO_URL="${RAYA_REPO_URL:-https://github.com/SDH4114/Raya-APPLE.git}"
 REPO_REF="${RAYA_REPO_REF:-prime}"
 NODE_MAJOR="${RAYA_NODE_MAJOR:-22}"
+raya_state_dir="${RAYA_HOME:-$HOME/.raya}"
+preserve_raya_state=0
+raya_was_installed=0
+if command -v raya >/dev/null 2>&1; then
+  raya_was_installed=1
+fi
+if [ "$raya_was_installed" -eq 1 ] && [ "${RAYA_UPDATE_CHECKPOINT_CREATED:-0}" != "1" ]; then
+  echo "Raya is already installed. Run 'raya update' so a local checkpoint is created before replacement." >&2
+  exit 1
+fi
+if [ "${RAYA_UPDATE_MODE:-0}" = "1" ] || [ -e "$raya_state_dir" ] || [ "$raya_was_installed" -eq 1 ]; then
+  preserve_raya_state=1
+fi
 
 case "$(uname -s)" in
   Darwin|Linux) ;;
@@ -102,7 +115,14 @@ cleanup() {
 trap cleanup EXIT
 
 echo "Downloading Raya from $REPO_URL#$REPO_REF..."
-git clone --depth 1 --branch "$REPO_REF" "$REPO_URL" "$tmpdir/raya"
+if [[ "$REPO_REF" =~ ^[0-9a-fA-F]{40}$ ]]; then
+  git init "$tmpdir/raya"
+  git -C "$tmpdir/raya" remote add origin "$REPO_URL"
+  git -C "$tmpdir/raya" fetch --depth 1 origin "$REPO_REF"
+  git -C "$tmpdir/raya" checkout --detach FETCH_HEAD
+else
+  git clone --depth 1 --branch "$REPO_REF" "$REPO_URL" "$tmpdir/raya"
+fi
 
 cd "$tmpdir/raya"
 npm ci
@@ -121,15 +141,18 @@ if [ ! -x "$raya_executable" ]; then
 fi
 
 ensure_raya_on_path "$raya_executable"
-"$raya_executable" skills sync
+if [ "$preserve_raya_state" -eq 1 ]; then
+  echo "Preserved existing Raya state at $raya_state_dir."
+else
+  "$raya_executable" skills sync
 
-# Loading Raya during the first-run sync creates the user-owned default
-# personality only when it is missing. Keep installation honest: a successful
-# installer must leave this file ready before the user starts Raya.
-raya_state_dir="${RAYA_HOME:-$HOME/.raya}"
-if [ ! -f "$raya_state_dir/SOUL.md" ]; then
-  echo "Raya initialization did not create $raya_state_dir/SOUL.md." >&2
-  exit 1
+  # Loading Raya during the first-run sync creates the user-owned default
+  # personality only when it is missing. Keep installation honest: a successful
+  # fresh installer must leave this file ready before the user starts Raya.
+  if [ ! -f "$raya_state_dir/SOUL.md" ]; then
+    echo "Raya initialization did not create $raya_state_dir/SOUL.md." >&2
+    exit 1
+  fi
 fi
 
 echo

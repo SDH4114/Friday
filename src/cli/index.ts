@@ -42,7 +42,7 @@ import { formatMcpStatusLines, McpRuntime } from "../mcp/client.js";
 import { ensureBuiltinSkills } from "../skills/bootstrap.js";
 import { listAvailableSkills } from "../skills/loader.js";
 import { characterProfile, characterSuggestions } from "../character/catalog.js";
-import { compareVersions, isUpdateApproved, readGithubRelease, runGithubInstaller } from "./update.js";
+import { compareVersions, installGithubReleaseWithCheckpoint, isUpdateApproved, readGithubRelease } from "./update.js";
 import {
   createBackup,
   discoverBackups,
@@ -90,9 +90,9 @@ program.configureHelp({
     return command.name() === "web" ? term.replace(/^web\b/, "web (demo)") : term;
   }
 });
-const VERSION = "0.1.3";
+const VERSION = "0.1.4";
 let builtinCommandNames = new Set<string>();
-setActiveTheme(process.argv[2] === "uninstall" ? "ocean" : loadConfig().theme);
+setActiveTheme(["uninstall", "update"].includes(process.argv[2] ?? "") ? "ocean" : loadConfig().theme);
 
 class AsyncLock {
   private tail: Promise<void> = Promise.resolve();
@@ -376,7 +376,7 @@ Examples and direct commands:
   raya open <application>      Open a desktop application
   raya gateway --setup         Configure Telegram delivery
   raya gateway --start         Run the Telegram gateway
-  raya update                  Check GitHub and offer to update Raya
+  raya update                  Checkpoint state, then install a pinned update
   raya backup                  Create a configured local or GitHub backup
   raya backup --list           List versions available for rollback
   raya backup --restore <ref>  Restore Raya and ~/.raya from a backup
@@ -412,14 +412,15 @@ program
   .argument("[name]", "profile name")
   .argument("[nextName]", "new name when renaming")
   .description("Manage isolated Raya identity, instructions, memory, and sessions.")
+  .option("--list", "List profiles and mark the active profile.")
   .option("--clone", "Copy SOUL.md and AGENTS.md from the active or selected source profile.")
   .option("--clone-all", "Copy SOUL.md, AGENTS.md, and MEMORY.md from the source profile.")
   .option("--clone-from <profile>", "Clone from this profile instead of the active profile.")
   .option("-y, --yes", "Delete without typed confirmation.")
   .action(async (action: string, name: string | undefined, nextName: string | undefined, rawOptions: unknown) => {
-    const options = commandOptions<{ clone?: boolean; cloneAll?: boolean; cloneFrom?: string; yes?: boolean }>(rawOptions);
+    const options = commandOptions<{ list?: boolean; clone?: boolean; cloneAll?: boolean; cloneFrom?: string; yes?: boolean }>(rawOptions);
     const config = loadConfig();
-    if (action === "list") {
+    if (options.list || action === "list") {
       printProfiles(config.activeProfile);
       return;
     }
@@ -685,7 +686,7 @@ program
 
 program
   .command("update")
-  .description("Check GitHub for a newer Raya version and update after confirmation.")
+  .description("Checkpoint Raya, preserve RAYA_HOME, and install a pinned GitHub update.")
   .action(async () => {
     console.log("Checking the latest Raya version on GitHub...");
     const githubRelease = await readGithubRelease();
@@ -708,8 +709,15 @@ program
       rl.close();
     }
 
-    console.log("Updating Raya from GitHub...");
-    await runGithubInstaller(githubRelease.commit);
+    console.log("Creating a required local checkpoint before the update...");
+    await installGithubReleaseWithCheckpoint(VERSION, githubRelease, {
+      onCheckpoint: (checkpoint) => {
+        console.log(`Checkpoint: ${checkpoint.directory}`);
+        console.log(`Restore with: raya backup --restore '${checkpoint.reference}'`);
+        console.log(`Preserving ${RAYA_HOME} unchanged...`);
+        console.log("Updating Raya from GitHub...");
+      }
+    });
     console.log(`Raya updated to v${githubVersion}. Open a new terminal if your shell needs to refresh its PATH.`);
   });
 
@@ -1690,7 +1698,7 @@ function commandNames(command: Command): string[] {
 }
 
 builtinCommandNames = new Set(program.commands.flatMap(commandNames));
-for (const custom of process.argv[2] === "uninstall" ? [] : listCustomCommands()) {
+for (const custom of ["uninstall", "update"].includes(process.argv[2] ?? "") ? [] : listCustomCommands()) {
   if (builtinCommandNames.has(custom.name)) continue;
   program
     .command(custom.name)
